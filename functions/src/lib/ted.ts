@@ -8,20 +8,17 @@ type TedSearchResponse = {
   errors?: any;
 };
 
-const TED_URL = "https://api.ted.europa.eu/v3/notices/search";
+const TED_URL = "https://ted.europa.eu/api/v3/notices/search";
 const DEFAULT_FIELDS = [
   "publication-number",
-  "notice-identifier",
   "notice-title",
   "buyer-name",
   "publication-date",
   "deadline-date-lot",
   "classification-cpv",
   "estimated-value-glo",
-  "estimated-value-cur-glo",
   "total-value",
   "links",
-  "description-proc",
 ];
 
 async function fetchJson(input: string | URL, init: RequestInit) {
@@ -76,21 +73,6 @@ export async function tedSearch({
     method: "POST",
     body: JSON.stringify(body),
   })) as TedSearchResponse;
-
-  if (json?.notices?.length) {
-    console.log(
-      "🔎 TED API raw notice[0]:",
-      JSON.stringify(json.notices[0], null, 2)
-    );
-    if (json.notices[1]) {
-      console.log(
-        "🔎 TED API raw notice[1]:",
-        JSON.stringify(json.notices[1], null, 2)
-      );
-    }
-  } else {
-    console.log("⚠️ TED API returned no notices for query:", q);
-  }
 
   // Occasionally the API returns nothing due to strict dates.
   // We'll just return an array (possibly empty) and let caller decide fallbacks.

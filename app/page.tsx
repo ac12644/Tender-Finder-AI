@@ -1,16 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useAuth } from "@/components/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import { ArrowRight, ExternalLink, Loader2, RefreshCcw } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 /* -------------------------------------------------------
  * Config
@@ -159,22 +157,11 @@ function parseTendersFromMarkdownTable(md: string): ParsedTenderRow[] {
     .filter((r) => r.title || r.pubno);
 }
 
-function fmtMoney(input?: string | number | null): string {
-  if (input == null || input === "") return "—";
-  if (typeof input === "number" && !isNaN(input)) {
-    return new Intl.NumberFormat("it-IT", {
-      style: "currency",
-      currency: "EUR",
-      minimumFractionDigits: 2,
-    }).format(input);
-  }
-  return String(input);
-}
-
 /* -------------------------------------------------------
- * Suggerimenti “intelligenti” locali
+ * AI-Powered Smart Suggestions
  * ----------------------------------------------------- */
 const SUGG_KEY = "tender_last_prompts";
+const AI_SUGG_KEY = "tender_ai_suggestions";
 
 function rememberPrompt(p: string) {
   try {
@@ -185,25 +172,102 @@ function rememberPrompt(p: string) {
   } catch {}
 }
 
+async function fetchAISuggestions(
+  uid: string | null,
+  idToken: string | null,
+  context?: string
+): Promise<string[]> {
+  try {
+    const headers: HeadersInit = {
+      "x-user-id": uid ?? "anon",
+      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      "Content-Type": "application/json",
+    };
+
+    const response = await fetch(`${BASE_URL}/suggestions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        context,
+        suggestionType: "search",
+        limit: 4,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.suggestions || [];
+  } catch (error) {
+    console.warn("Failed to fetch AI suggestions:", error);
+    return [];
+  }
+}
+
+async function fetchPersonalizedSuggestions(
+  uid: string | null,
+  idToken: string | null,
+  searchHistory: string[] = []
+): Promise<string[]> {
+  if (!uid || uid === "anon") return [];
+
+  try {
+    const headers: HeadersInit = {
+      "x-user-id": uid,
+      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      "Content-Type": "application/json",
+    };
+
+    const response = await fetch(`${BASE_URL}/getPersonalizedRecommendations`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        searchHistory,
+        limit: 4,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.suggestions || [];
+  } catch (error) {
+    console.warn("Failed to fetch personalized suggestions:", error);
+    return [];
+  }
+}
+
 function loadSuggestions(): string[] {
   try {
     const raw = localStorage.getItem(SUGG_KEY);
     const arr = raw ? (JSON.parse(raw) as string[]) : [];
-    // seed di base in mancanza di storico
-    const seed = [
-      "trova bandi informatica pubblicati oggi in Italia",
-      "mostra bandi con scadenza entro 7 giorni in Lombardia",
-      "riassumi i bandi più recenti (max 5)",
-    ];
-    return arr.length ? arr : seed;
+    return arr;
   } catch {
-    return [
-      "trova bandi informatica pubblicati oggi in Italia",
-      "mostra bandi con scadenza entro 7 giorni in Lombardia",
-      "riassumi i bandi più recenti (max 5)",
-    ];
+    return [];
   }
 }
+
+function loadAISuggestions(): string[] {
+  try {
+    const raw = localStorage.getItem(AI_SUGG_KEY);
+    const arr = raw ? (JSON.parse(raw) as string[]) : [];
+    return arr;
+  } catch {
+    return [];
+  }
+}
+
+function saveAISuggestions(suggestions: string[]) {
+  try {
+    localStorage.setItem(AI_SUGG_KEY, JSON.stringify(suggestions));
+  } catch {}
+}
+
+// This function will be defined inside the HomePage component
 
 /* -------------------------------------------------------
  * UI semplici
@@ -217,127 +281,23 @@ function SuggestionChips({
   onPick: (s: string) => void;
   disabled?: boolean;
 }) {
+  if (!suggestions.length) return null;
+
   return (
-    <div className="flex justify-end">
-      <div className="relative max-w-[85%] px-3 py-2">
-        <div className="flex flex-col gap-2">
-          {suggestions.map((s, i) => (
-            <Button
-              key={s + i}
-              type="button"
-              size="sm"
-              variant="ghost"
-              aria-label={`Suggerimento ${i + 1}: ${s}`}
-              className={[
-                "w-full justify-start",
-                "rounded-lg",
-                "border border-border/60",
-                "bg-background hover:bg-muted",
-                "text-foreground",
-                "cursor-pointer",
-                "px-3 py-2",
-                "shadow-sm transition-transform",
-                "hover:-translate-y-0.5 active:translate-y-0",
-                "focus-visible:ring-2 focus-visible:ring-primary/40",
-              ].join(" ")}
-              onClick={() => onPick(s)}
-              disabled={!!disabled}
-            >
-              {s}
-            </Button>
-          ))}
-        </div>
-      </div>
+    <div className="flex flex-wrap gap-2">
+      {suggestions.map((s, i) => (
+        <button
+          key={s + i}
+          type="button"
+          aria-label={`Suggerimento ${i + 1}: ${s}`}
+          className="px-4 py-2 text-sm text-gray-700 bg-white border border-gray-200 rounded-full hover:bg-gray-50 hover:border-gray-300 transition-all duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+          onClick={() => onPick(s)}
+          disabled={!!disabled}
+        >
+          {s}
+        </button>
+      ))}
     </div>
-  );
-}
-
-/* -------------------------------------------------------
- * Card bando (riuso della tabella compatta)
- * ----------------------------------------------------- */
-function TenderCard({ row }: { row: ParsedTenderRow }) {
-  const idForUrl = row.noticeId || row.pubno;
-  const tedUrl = idForUrl
-    ? `https://ted.europa.eu/it/notice/-/detail/${encodeURIComponent(idForUrl)}`
-    : undefined;
-
-  const pdfUrl = row.pdf && /^https?:\/\//i.test(row.pdf) ? row.pdf : undefined;
-  const pdfLabel = pdfUrl?.includes("/it/")
-    ? "PDF (IT)"
-    : pdfUrl?.includes("/en/")
-    ? "PDF (EN)"
-    : "PDF";
-
-  return (
-    <Card className="border bg-gradient-to-b from-muted/40 to-background hover:shadow-md transition">
-      <CardContent className="p-4">
-        <div className="text-sm font-semibold leading-snug line-clamp-2">
-          {row.title || "Bando"}
-        </div>
-
-        <div className="mt-1 text-xs text-muted-foreground">
-          {row.buyer || "—"}
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
-          {row.pubno && (
-            <span className="rounded-full bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-200 px-2 py-0.5">
-              PubNo: {row.pubno}
-            </span>
-          )}
-          {row.published && (
-            <span className="rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 px-2 py-0.5">
-              Pubbl.: {row.published}
-            </span>
-          )}
-          {row.deadline && (
-            <span className="rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-200 px-2 py-0.5">
-              Scad.: {row.deadline}
-            </span>
-          )}
-          {row.cpv && (
-            <Badge
-              variant="secondary"
-              className="rounded-full text-[11px] bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-200"
-            >
-              CPV {row.cpv}
-            </Badge>
-          )}
-        </div>
-
-        {row.description && (
-          <p className="mt-3 text-[13px] text-muted-foreground line-clamp-3">
-            {row.description}
-          </p>
-        )}
-
-        {row.value && (
-          <div className="mt-3 text-sm font-semibold">
-            <span className="inline-flex items-center rounded-lg bg-emerald-600/10 px-2 py-1">
-              <span className="mr-1.5 h-2 w-2 rounded-full bg-emerald-600" />
-              {fmtMoney(row.value)}
-            </span>
-          </div>
-        )}
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          {pdfUrl && (
-            <Button asChild size="sm" className="gap-1">
-              <Link href={pdfUrl} target="_blank" rel="noopener">
-                {pdfLabel} <ExternalLink className="h-3.5 w-3.5" />
-              </Link>
-            </Button>
-          )}
-          {tedUrl && (
-            <Button asChild size="sm" variant="secondary" className="gap-1">
-              <Link href={tedUrl} target="_blank" rel="noopener">
-                Apri su TED <ExternalLink className="h-3.5 w-3.5" />
-              </Link>
-            </Button>
-          )}
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -346,7 +306,15 @@ function TenderCard({ row }: { row: ParsedTenderRow }) {
  * ----------------------------------------------------- */
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
-function AssistantMessage({ text }: { text: string }) {
+function AssistantMessage({
+  text,
+  analyzeEligibility,
+  analyzingTender,
+}: {
+  text: string;
+  analyzeEligibility?: (tenderId: string) => Promise<unknown>;
+  analyzingTender?: string | null;
+}) {
   const parsed = React.useMemo(
     () => parseTendersFromMarkdownTable(text),
     [text]
@@ -354,9 +322,78 @@ function AssistantMessage({ text }: { text: string }) {
 
   if (parsed.length > 0) {
     return (
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="space-y-3">
         {parsed.map((r, i) => (
-          <TenderCard key={`${r.noticeId || r.pubno}-${i}`} row={r} />
+          <div
+            key={`${r.noticeId || r.pubno}-${i}`}
+            className="bg-gray-50 border border-gray-100 rounded-xl p-4 hover:bg-gray-100 transition-colors"
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between mb-3">
+              <div className="flex-1 min-w-0">
+                <h4 className="text-sm font-medium text-gray-900 line-clamp-2 mb-1">
+                  {r.title}
+                </h4>
+                <p className="text-xs text-gray-500 truncate">{r.buyer}</p>
+              </div>
+              {r.value && (
+                <div className="text-sm font-semibold text-green-600 ml-2 flex-shrink-0">
+                  {typeof r.value === "number"
+                    ? `€${r.value.toLocaleString()}`
+                    : r.value}
+                </div>
+              )}
+            </div>
+
+            {/* Details */}
+            <div className="flex items-center justify-between text-xs text-gray-500">
+              <div className="flex items-center gap-3">
+                {r.deadline && (
+                  <span>
+                    Scadenza: {new Date(r.deadline).toLocaleDateString("it-IT")}
+                  </span>
+                )}
+                {r.pubno && <span className="font-mono">{r.pubno}</span>}
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-2">
+                {r.pdf && (
+                  <a
+                    href={r.pdf}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-500 hover:text-blue-600 transition-colors"
+                    onClick={() => console.log("PDF link clicked:", r.pdf)}
+                  >
+                    PDF
+                  </a>
+                )}
+                {analyzeEligibility && (
+                  <button
+                    onClick={() => {
+                      console.log(
+                        "Analysis button clicked for:",
+                        r.noticeId || r.pubno
+                      );
+                      analyzeEligibility(r.noticeId || r.pubno || "");
+                    }}
+                    disabled={analyzingTender === (r.noticeId || r.pubno)}
+                    className="text-blue-500 hover:text-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    {analyzingTender === (r.noticeId || r.pubno) ? (
+                      <>
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Analisi...
+                      </>
+                    ) : (
+                      "Analisi"
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         ))}
       </div>
     );
@@ -389,6 +426,107 @@ export default function HomePage() {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
   const [suggestions, setSuggestions] = useState<string[]>(loadSuggestions());
+  const [aiSuggestions, setAiSuggestions] = useState<string[]>(
+    loadAISuggestions()
+  );
+  const [personalizedSuggestions, setPersonalizedSuggestions] = useState<
+    string[]
+  >([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [analyzingTender, setAnalyzingTender] = useState<string | null>(null);
+
+  async function analyzeEligibility(tenderId: string) {
+    if (!uid || uid === "anon") {
+      toast.info("Devi essere loggato per analizzare l'eligibilità");
+      return;
+    }
+
+    setAnalyzingTender(tenderId);
+    try {
+      console.log("Analyzing eligibility for tender:", tenderId);
+      toast.info("Analisi in corso...", {
+        description: "Sto analizzando l'eligibilità del bando",
+        duration: 2000,
+      });
+
+      const headers: HeadersInit = {
+        "x-user-id": uid,
+        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        "Content-Type": "application/json",
+      };
+
+      const response = await fetch(`${BASE_URL}/analyzeEligibility`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ tenderId }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log("Analysis result:", data);
+
+      if (data && data.eligible !== undefined) {
+        const score = Math.round((data.eligibilityScore || 0) * 100);
+        toast.success("Analisi completata!", {
+          description: `Eligibilità: ${score}% - ${
+            data.eligible ? "Eligibile" : "Non eligibile"
+          }`,
+          duration: 5000,
+        });
+      } else {
+        toast.success("Analisi completata!");
+      }
+
+      return data;
+    } catch (error) {
+      console.error("Error analyzing eligibility:", error);
+      toast.error("Errore durante l'analisi", {
+        description: "Riprova più tardi",
+        duration: 3000,
+      });
+      return null;
+    } finally {
+      setAnalyzingTender(null);
+    }
+  }
+
+  // Load AI suggestions on component mount
+  useEffect(() => {
+    const loadAISuggestions = async () => {
+      if (authLoading) return;
+
+      setLoadingSuggestions(true);
+      try {
+        // Load general AI suggestions
+        const generalSuggestions = await fetchAISuggestions(uid, idToken);
+        if (generalSuggestions.length > 0) {
+          setAiSuggestions(generalSuggestions);
+          saveAISuggestions(generalSuggestions);
+        }
+
+        // Load personalized suggestions for authenticated users
+        if (uid && uid !== "anon") {
+          const personalizedSuggestions = await fetchPersonalizedSuggestions(
+            uid,
+            idToken,
+            suggestions
+          );
+          if (personalizedSuggestions.length > 0) {
+            setPersonalizedSuggestions(personalizedSuggestions);
+          }
+        }
+      } catch (error) {
+        console.warn("Failed to load AI suggestions:", error);
+      } finally {
+        setLoadingSuggestions(false);
+      }
+    };
+
+    loadAISuggestions();
+  }, [uid, idToken, authLoading, suggestions]);
 
   useEffect(() => {
     scrollerRef.current?.scrollTo({
@@ -432,6 +570,21 @@ export default function HomePage() {
       const assistant = pickLastAssistantMessage(data.messages);
       if (assistant && assistant.content) {
         setMessages((prev) => [...prev, assistant]);
+
+        // Generate contextual suggestions based on the search results
+        try {
+          const contextualSuggestions = await fetchAISuggestions(
+            uid,
+            idToken,
+            `User searched for: ${content}. Generate related suggestions.`
+          );
+          if (contextualSuggestions.length > 0) {
+            setAiSuggestions(contextualSuggestions);
+            saveAISuggestions(contextualSuggestions);
+          }
+        } catch (error) {
+          console.warn("Failed to generate contextual suggestions:", error);
+        }
       } else {
         setMessages((prev) => [
           ...prev,
@@ -490,46 +643,28 @@ export default function HomePage() {
       input.trim() === "");
 
   return (
-    <div className="flex h-dvh w-full flex-col bg-background text-foreground">
-      {/* Corpo */}
+    <div className="flex h-dvh w-full flex-col bg-white">
+      {/* Main Content */}
       <main className="flex-1 overflow-hidden">
-        <div className="mx-auto h-full w-full max-w-6xl px-4 sm:px-6 lg:px-8">
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <div className="sm:col-span-2 text-sm text-muted-foreground">
-              Chiedi bandi in linguaggio naturale. Esempio:{" "}
-              <span className="text-foreground italic">
-                “trova bandi pulizia in Lombardia pubblicati oggi”
-              </span>
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  setMessages([
-                    {
-                      role: "assistant",
-                      content:
-                        "Nuova chat. Dimmi cosa cerchi (es: *software* in *Lazio* pubblicati *oggi*).",
-                    },
-                  ])
-                }
-                className="gap-1"
-              >
-                <RefreshCcw className="h-4 w-4" />
-                Nuova chat
-              </Button>
-            </div>
+        <div className="mx-auto h-full w-full max-w-4xl px-6">
+          {/* Welcome Section */}
+          <div className="pt-12 pb-8 text-center">
+            <h1 className="text-2xl font-semibold text-gray-900 mb-2">
+              Tender Agent
+            </h1>
+            <p className="text-gray-500 text-base">
+              Trova i bandi più adatti alla tua azienda
+            </p>
+            <p className="text-gray-400 text-sm mt-1">
+              Esempio: &ldquo;bandi software Lombardia oggi&rdquo;
+            </p>
           </div>
 
-          {/* Contenitore chat */}
-          <div className="mt-3 flex h-[calc(100dvh-4rem-6.5rem)] flex-col rounded-2xl border bg-muted/20 p-3 sm:p-4">
-            {/* Stream */}
-            <div
-              ref={scrollerRef}
-              className="flex-1 overflow-y-auto rounded-xl bg-background/60 p-2 sm:p-3"
-            >
-              <div className="space-y-3">
+          {/* Chat Container */}
+          <div className="flex h-[calc(100dvh-12rem)] flex-col">
+            {/* Messages Area */}
+            <div ref={scrollerRef} className="flex-1 overflow-y-auto">
+              <div className="space-y-4 pb-4">
                 {messages.map((m, i) => (
                   <div
                     key={i}
@@ -538,45 +673,77 @@ export default function HomePage() {
                     }`}
                   >
                     <div
-                      className={`rounded-2xl px-3 py-2 text-sm ${
+                      className={`max-w-[85%] px-4 py-3 text-sm ${
                         m.role === "user"
-                          ? "bg-primary text-primary-foreground shadow"
-                          : ""
+                          ? "bg-blue-500 text-white rounded-2xl rounded-br-md shadow-sm"
+                          : "bg-gray-50 text-gray-800 rounded-2xl rounded-bl-md border border-gray-100"
                       }`}
                     >
                       {m.role === "assistant" ? (
-                        <AssistantMessage text={m.content} />
+                        <AssistantMessage
+                          text={m.content}
+                          analyzeEligibility={analyzeEligibility}
+                          analyzingTender={analyzingTender}
+                        />
                       ) : (
-                        <span>{m.content}</span>
+                        <span className="leading-relaxed">{m.content}</span>
                       )}
                     </div>
                   </div>
                 ))}
 
                 {showSuggestions && (
-                  <SuggestionChips
-                    suggestions={suggestions}
-                    onPick={(s) => !loading && send(s)}
-                    disabled={loading}
-                  />
+                  <div className="space-y-6">
+                    {/* All suggestions combined */}
+                    {[
+                      ...personalizedSuggestions,
+                      ...aiSuggestions,
+                      ...suggestions,
+                    ].slice(0, 4).length > 0 && (
+                      <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
+                        <h3 className="text-sm font-medium text-gray-700 mb-4">
+                          Suggerimenti per te
+                        </h3>
+                        <SuggestionChips
+                          suggestions={[
+                            ...personalizedSuggestions,
+                            ...aiSuggestions,
+                            ...suggestions,
+                          ].slice(0, 4)}
+                          onPick={(s) => !loading && send(s)}
+                          disabled={loading}
+                        />
+                      </div>
+                    )}
+
+                    {/* Loading state for suggestions */}
+                    {loadingSuggestions && (
+                      <div className="flex justify-center py-8">
+                        <div className="text-sm text-gray-500 flex items-center gap-3 bg-gray-50 px-4 py-3 rounded-full border border-gray-100">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Generando suggerimenti...
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {loading && (
                   <div className="flex justify-start">
-                    <div className="bg-background border rounded-2xl px-3 py-2 text-sm shadow inline-flex items-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Sto cercando bandi…
+                    <div className="bg-gray-50 rounded-2xl px-4 py-3 text-sm inline-flex items-center gap-3 border border-gray-100">
+                      <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                      <span className="text-gray-600">Sto cercando bandi…</span>
                     </div>
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Composer */}
-            <div className="sticky bottom-0 mt-3 rounded-xl border bg-background/80 p-2 sm:p-3 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-              <div className="flex items-center gap-2">
+            {/* Input Area */}
+            <div className="border-t border-gray-100 bg-white px-6 py-4">
+              <div className="flex items-center gap-3">
                 <Input
-                  placeholder="Scrivi la tua richiesta (Invio per inviare)…"
+                  placeholder="Scrivi la tua richiesta…"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -585,23 +752,22 @@ export default function HomePage() {
                       send();
                     }
                   }}
-                  className="min-h-10"
+                  className="flex-1 h-12 px-4 text-base border border-gray-200 rounded-full focus:border-blue-500 focus:ring-0 bg-gray-50 focus:bg-white transition-colors"
                   aria-label="Messaggio per Tender Agent"
                 />
                 <Button
                   onClick={() => send()}
-                  disabled={loading}
-                  className="min-h-10"
+                  disabled={loading || !input.trim()}
+                  className="h-12 w-12 rounded-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 shadow-sm transition-all duration-200"
                   aria-label="Invia messaggio"
                 >
                   {loading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Loader2 className="h-5 w-5 animate-spin text-white" />
                   ) : (
-                    <ArrowRight className="h-4 w-4" />
+                    <ArrowRight className="h-5 w-5 text-white" />
                   )}
                 </Button>
               </div>
-              <div className="pb-[env(safe-area-inset-bottom)]" />
             </div>
           </div>
         </div>

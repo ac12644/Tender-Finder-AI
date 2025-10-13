@@ -15,7 +15,6 @@ import {
   saveMatchScore,
 } from "./lib/firestore";
 import { tedSearch } from "./lib/ted";
-import { GOOGLE_GENAI_API_KEY, OPENROUTER_API_KEY } from "./lib/llm";
 
 import { tedPull } from "./jobs/pull";
 import { tendersProcess } from "./jobs/process";
@@ -26,6 +25,14 @@ export { exportCsv } from "./index.export";
 
 export { digestDaily } from "./index.digest";
 export { events } from "./index.events";
+export { suggestions } from "./index.suggestions";
+export {
+  getCompanyProfile,
+  upsertCompanyProfile,
+  getBestTenders,
+  analyzeEligibility,
+  getPersonalizedRecommendations,
+} from "./index.company";
 
 /* ---------------- CORS ---------------- */
 function setCors(res: any) {
@@ -196,7 +203,6 @@ export const agentChat = onRequest(
     cors: true,
     timeoutSeconds: 180,
     memory: "512MiB",
-    secrets: [GOOGLE_GENAI_API_KEY, OPENROUTER_API_KEY],
   },
   async (req, res): Promise<void> => {
     setCors(res);
@@ -238,6 +244,77 @@ export const agentChat = onRequest(
       const lcMessages = toLCMessages(withDate); // BaseMessage[]
 
       const thread_id = String(req.body?.thread_id ?? `thread-${Date.now()}`);
+
+      // Check if this is a tender search request and bypass agent if needed
+      const lastUserMessage =
+        userMsgs
+          .filter((m) => m.role === "user")
+          .pop()
+          ?.content?.toLowerCase() || "";
+      const isTenderSearch =
+        lastUserMessage.includes("bando") ||
+        lastUserMessage.includes("tender") ||
+        lastUserMessage.includes("appalto") ||
+        lastUserMessage.includes("gara") ||
+        lastUserMessage.includes("software") ||
+        lastUserMessage.includes("servizi") ||
+        lastUserMessage.includes("forniture");
+
+      if (isTenderSearch) {
+        try {
+          // Direct TED search bypass
+          const searchQuery = lastUserMessage
+            .replace(/trova|cerca|search|find/gi, "")
+            .trim();
+          const tedResults = await tedSearch({ q: searchQuery, limit: 5 });
+
+          if (tedResults && tedResults.length > 0) {
+            const formattedResults = tedResults
+              .map((tender: any) => {
+                const value = tender.value
+                  ? `€ ${tender.value.toLocaleString()}`
+                  : "—";
+                const deadline = tender.deadline
+                  ? new Date(tender.deadline).toLocaleDateString("it-IT")
+                  : "—";
+                const pdf = tender.pdf || "—";
+
+                return `| ${tender.title || "—"} | ${
+                  tender.buyer || "—"
+                } | ${value} | ${deadline} | ${tender.pubno || "—"} | ${pdf} |`;
+              })
+              .join("\n");
+
+            const response =
+              `Ho trovato ${tedResults.length} bandi per "${searchQuery}":\n\n` +
+              `| Titolo | Ente | Valore | Scadenza | Pub. No. | PDF |\n` +
+              `|--------|------|--------|----------|----------|-----|\n` +
+              formattedResults;
+
+            res.json({
+              messages: [
+                ...withDate.map((m) => ({ role: m.role, content: m.content })),
+                { role: "assistant", content: response, name: "tender_agent" },
+              ],
+              thread_id,
+            });
+            return;
+          } else {
+            const response = `Nessun bando trovato per "${searchQuery}". Prova con termini diversi o specifica meglio la tua ricerca.`;
+            res.json({
+              messages: [
+                ...withDate.map((m) => ({ role: m.role, content: m.content })),
+                { role: "assistant", content: response, name: "tender_agent" },
+              ],
+              thread_id,
+            });
+            return;
+          }
+        } catch (error) {
+          console.error("Direct TED search error:", error);
+          // Fall back to agent if direct search fails
+        }
+      }
 
       const out = await graphApp.invoke(
         { messages: lcMessages },
@@ -448,6 +525,47 @@ export const matchSave = onRequest(
         Number(score ?? 0)
       );
       res.json({ ok: true });
+    } catch (e: any) {
+      console.error(e);
+      res.status(500).json({ error: e?.message ?? "Save failed" });
+    }
+  }
+);
+
+export const saveFavorite = onRequest(
+  { region: "europe-west1", cors: true },
+  async (req, res): Promise<void> => {
+    setCors(res);
+    if (req.method === "OPTIONS") {
+      res.status(204).send("");
+      return;
+    }
+    try {
+      const uid = req.headers["x-user-id"] as string;
+      if (!uid || uid === "anon") {
+        res.status(401).json({ error: "Authentication required" });
+        return;
+      }
+
+      const { tenderId } = req.body;
+      if (!tenderId) {
+        res.status(400).json({ error: "Missing tenderId" });
+        return;
+      }
+
+      // Save to favorites collection
+      await db
+        .collection("favorites")
+        .doc(uid)
+        .collection("tenders")
+        .doc(tenderId)
+        .set({
+          uid,
+          tenderId,
+          createdAt: new Date(),
+        });
+
+      res.json({ success: true, message: "Tender saved to favorites" });
     } catch (e: any) {
       console.error(e);
       res.status(500).json({ error: e?.message ?? "Save failed" });

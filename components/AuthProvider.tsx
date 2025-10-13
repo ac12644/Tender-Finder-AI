@@ -1,13 +1,7 @@
 "use client";
 import * as React from "react";
 import type { User } from "firebase/auth";
-import {
-  auth,
-  ensureSignedIn,
-  signInWithGoogle,
-  signOutUser,
-  watchUser,
-} from "@/lib/firebaseClient";
+import { signInWithGoogle, signOutUser, watchUser } from "@/lib/firebaseClient";
 
 type AuthContextValue = {
   user: User | null;
@@ -25,36 +19,52 @@ const AuthContext = React.createContext<AuthContextValue | undefined>(
 );
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = React.useState<User | null>(auth.currentUser ?? null);
+  const [user, setUser] = React.useState<User | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [idToken, setIdToken] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    // on first load, ensure at least anonymous user exists
+    // Set up auth state listener
     const unsub = watchUser(async (u) => {
       setUser(u);
       setLoading(false);
-      setIdToken(u ? await u.getIdToken() : null);
-    });
-
-    // if no user after first tick, create anonymous
-    (async () => {
-      if (!auth.currentUser) {
+      if (u) {
         try {
-          await ensureSignedIn();
-        } catch {
-          /* noop */
+          const token = await u.getIdToken();
+          setIdToken(token);
+        } catch (error) {
+          console.error("Error getting ID token:", error);
+          setIdToken(null);
         }
+      } else {
+        setIdToken(null);
       }
-    })();
+    });
 
     return () => unsub && unsub();
   }, []);
 
   const refreshToken = React.useCallback(async () => {
     if (!user) return;
-    setIdToken(await user.getIdToken(true));
+    try {
+      const token = await user.getIdToken(true);
+      setIdToken(token);
+    } catch (error) {
+      console.error("Error refreshing token:", error);
+      setIdToken(null);
+    }
   }, [user]);
+
+  // Auto-refresh token every 50 minutes (tokens expire after 1 hour)
+  React.useEffect(() => {
+    if (!user) return;
+
+    const interval = setInterval(() => {
+      refreshToken();
+    }, 50 * 60 * 1000); // 50 minutes
+
+    return () => clearInterval(interval);
+  }, [user, refreshToken]);
 
   const value = React.useMemo<AuthContextValue>(
     () => ({

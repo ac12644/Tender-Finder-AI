@@ -7,6 +7,8 @@ import {
   signOut,
   onAuthStateChanged,
   User,
+  setPersistence,
+  browserLocalPersistence,
 } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
@@ -26,6 +28,11 @@ export const app = getApps().length
 
 export const auth = getAuth(app);
 
+// Set persistence to local storage
+setPersistence(auth, browserLocalPersistence).catch((error) => {
+  console.error("Error setting auth persistence:", error);
+});
+
 export const db = getFirestore(app);
 
 export const provider = new GoogleAuthProvider();
@@ -39,8 +46,13 @@ export async function ensureSignedIn(): Promise<User> {
 
 export async function signInWithGoogle(): Promise<User> {
   const a = getAuth();
-  const cred = await signInWithPopup(a, provider);
-  return cred.user;
+  try {
+    const cred = await signInWithPopup(a, provider);
+    return cred.user;
+  } catch (error) {
+    console.error("Error signing in with Google:", error);
+    throw error;
+  }
 }
 
 export async function signOutUser(): Promise<void> {

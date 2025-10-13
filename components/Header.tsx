@@ -2,39 +2,51 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { UserMenu } from "@/components/UserMenu";
-import { Bot, Star, Settings2, Heart } from "lucide-react";
+import { Bot, Building2, Search, BarChart3 } from "lucide-react";
 
 export function Header() {
   return (
-    <header className="sticky top-0 z-20 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8 py-3">
+    <header className="sticky top-0 z-20 bg-white border-b border-gray-200">
+      <div className="mx-auto w-full max-w-6xl px-4 py-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Bot className="h-6 w-6" />
-            <Link
-              href="/"
-              className="text-lg sm:text-xl font-semibold tracking-tight"
-            >
-              Tender Agent (Italia)
+          <div className="flex items-center gap-3">
+            <Bot className="h-7 w-7 text-blue-500" />
+            <Link href="/" className="text-xl font-semibold text-gray-900">
+              Tender Agent
             </Link>
           </div>
-          <nav className="flex items-center gap-2">
-            <Button asChild variant="ghost" size="sm" className="gap-1">
-              <Link href="/preferenze">
-                <Settings2 className="h-4 w-4" />
-                Preferenze
+          <nav className="flex items-center gap-1">
+            <Button
+              asChild
+              variant="ghost"
+              size="sm"
+              className="text-gray-600 hover:text-gray-900"
+            >
+              <Link href="/profilo-aziendale">
+                <Building2 className="h-4 w-4" />
+                Profilo
               </Link>
             </Button>
-            <Button asChild variant="outline" size="sm" className="gap-1">
-              <Link href="/per-te">
-                <Star className="h-4 w-4" />
-                Per te
+            <Button
+              asChild
+              variant="ghost"
+              size="sm"
+              className="text-gray-600 hover:text-gray-900"
+            >
+              <Link href="/ricerca-avanzata">
+                <Search className="h-4 w-4" />
+                Ricerca
               </Link>
             </Button>
-            <Button asChild variant="outline" size="sm" className="gap-1">
-              <Link href="/preferiti">
-                <Heart className="h-4 w-4" />
-                Preferiti
+            <Button
+              asChild
+              variant="ghost"
+              size="sm"
+              className="text-gray-600 hover:text-gray-900"
+            >
+              <Link href="/dashboard">
+                <BarChart3 className="h-4 w-4" />
+                Dashboard
               </Link>
             </Button>
             <UserMenu />

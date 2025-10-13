@@ -79,6 +79,7 @@ build/Release
 # -------------------------------------------------------
 .env
 .env*
+.secret.local
 
 # -------------------------------------------------------
 # Vercel
@@ -90,3 +91,41 @@ build/Release
 # -------------------------------------------------------
 *.tsbuildinfo
 next-env.d.ts
+
+# -------------------------------------------------------
+# IDE and Editor files
+# -------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# -------------------------------------------------------
+# OS generated files
+# -------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# -------------------------------------------------------
+# Temporary files
+# -------------------------------------------------------
+*.tmp
+*.temp
+.tmp/
+.temp/
+
+# -------------------------------------------------------
+# Firebase Functions (if any in root)
+# -------------------------------------------------------
+functions/lib/
+functions/node_modules/
+functions/.env
+functions/.env.local
+functions/firestore-debug.log
+functions/firebase-debug.log

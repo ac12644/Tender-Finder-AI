@@ -6,6 +6,7 @@ import {
 } from "@langchain/langgraph";
 import { createReactAgent, withAgentName } from "@langchain/langgraph/prebuilt";
 import type { LanguageModelLike } from "@langchain/core/language_models/base";
+import { SystemMessage } from "@langchain/core/messages";
 
 import { llmFactory } from "../lib/llm";
 import {
@@ -14,6 +15,14 @@ import {
   saveMatchScoreTool,
   buildTedExpertQueryTool,
   currentDateTool,
+  generateSmartSuggestionsTool,
+  analyzeUserBehaviorTool,
+  generateContextualSuggestionsTool,
+  analyzeEligibilityTool,
+  getBestTendersTool,
+  getPersonalizedRecommendationsTool,
+  advancedSearchTool,
+  frameworkAgreementSearchTool,
 } from "./tools";
 
 /**
@@ -24,8 +33,10 @@ const llmProvider = async (): Promise<LanguageModelLike> => {
   const base = await llmFactory();
   try {
     if (
-      typeof (base as any).getName === "function" &&
-      (base as any).getName() === "ChatGoogleGenerativeAI"
+      typeof (base as unknown as { getName?: () => string }).getName ===
+        "function" &&
+      (base as unknown as { getName: () => string }).getName() ===
+        "ChatGoogleGenerativeAI"
     ) {
       return withAgentName(base, "inline");
     }
@@ -41,6 +52,14 @@ const tools = [
   saveTenderSummaryTool, // 📝 persist summaries
   saveMatchScoreTool, // 📈 persist match scores
   currentDateTool, // 📅 canonical server date helper
+  generateSmartSuggestionsTool, // 🧠 generate AI-powered suggestions
+  analyzeUserBehaviorTool, // 👤 analyze user behavior patterns
+  generateContextualSuggestionsTool, // 🔍 contextual suggestions
+  analyzeEligibilityTool, // ✅ analyze tender eligibility
+  getBestTendersTool, // 🎯 get best tenders for user
+  getPersonalizedRecommendationsTool, // 🎯 personalized recommendations
+  advancedSearchTool, // 🔬 advanced TED search with filters
+  frameworkAgreementSearchTool, // 📋 framework agreement search
 ];
 
 /**
@@ -52,11 +71,23 @@ export const agent = createReactAgent({
   llm: llmProvider,
   tools,
   name: "tender_agent",
+  messageModifier: async (messages) => {
+    // Force tool calls by prepending a system message
+    return [
+      new SystemMessage(
+        "You MUST use tools to answer user requests. Call build_ted_query then search_tenders."
+      ),
+      ...messages,
+    ];
+  },
   prompt: [
-    "You assist with EU/Italian public procurement (TED v3).",
-    "If the user asks for tenders in natural language:",
-    "  1) Call build_ted_query to construct a valid Expert Query.",
-    "  2) Call search_tenders with the returned query.",
+    "You are a TED tender search assistant. You MUST use the available tools to search for tenders.",
+    "CRITICAL: When users ask for tenders, you MUST call the tools in this exact order:",
+    "1. Call build_ted_query with the user's request",
+    "2. Call search_tenders with the query returned from step 1",
+    "3. Format the results in a markdown table",
+    "NEVER generate fake data. Always use the tools to get real tender data.",
+    "If search_tenders returns empty results, say 'Nessun bando trovato' and suggest alternatives.",
     "Default country = ITA unless the user asks otherwise.",
     "When building rows:",
     " - NoticeId = `notice-identifier` if present, else `publication-number`.",
@@ -69,6 +100,41 @@ export const agent = createReactAgent({
     "Include the following columns exactly in this order (use '—' if a value is unknown):",
     "| PubNo | NoticeId | Buyer | Title | Published | Deadline | CPV | Value | Pdf | Description |",
     "Never wrap tool arguments in code fences. Only pass fields defined by the tool schema.",
+    "",
+    "=== SMART SUGGESTIONS ===",
+    "When appropriate, generate smart suggestions using:",
+    "- generate_smart_suggestions: for general search suggestions based on trends and user profile",
+    "- analyze_user_behavior: for personalized suggestions based on user history and preferences",
+    "- generate_contextual_suggestions: for suggestions based on current search context and results",
+    "Always provide 3-5 relevant suggestions in Italian natural language after showing search results.",
+    "Suggestions should be actionable, specific, and help users discover related opportunities.",
+    "",
+    "=== ELIGIBILITY-AWARE FEATURES ===",
+    "For users with company profiles, provide intelligent tender analysis:",
+    "- analyze_eligibility: Check if a company is eligible for specific tenders",
+    "- get_best_tenders: Get pre-filtered tenders based on eligibility and preferences",
+    "- get_personalized_recommendations: Generate tailored search suggestions",
+    "Always consider:",
+    "1. Financial capacity requirements vs company revenue",
+    "2. Technical experience and certifications",
+    "3. Geographic restrictions and operating regions",
+    "4. Legal form requirements",
+    "5. Competition level and time constraints",
+    "6. Risk factors and opportunities",
+    "Provide clear eligibility scores (0-1) and recommendations (high/medium/low/skip).",
+    "",
+    "=== ADVANCED TED SEARCH CAPABILITIES ===",
+    "Use advanced search tools for specific requirements:",
+    "- advanced_search: Filter by procedure type, contract nature, framework agreements, electronic auctions, subcontracting, value ranges, geographic location",
+    "- framework_agreement_search: Search specifically for framework agreements and dynamic purchasing systems",
+    "Available filters:",
+    "1. Procedure types: open, restricted, negotiated, competitive-dialogue, innovation-partnership, framework-agreement",
+    "2. Contract nature: services, supplies, works, services-and-supplies, works-and-services",
+    "3. Special features: framework agreements, electronic auctions, subcontracting allowed",
+    "4. Value ranges: minimum and maximum contract values",
+    "5. Geographic: countries, cities, regions",
+    "6. CPV codes: specific or wildcard classifications",
+    "Use these tools when users ask for specific types of tenders or have detailed requirements.",
   ].join("\n"),
 });
 

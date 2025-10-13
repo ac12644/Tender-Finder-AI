@@ -13,19 +13,17 @@ import { IT_REGIONS, CPV_SUGGESTIONS } from "@/data";
 
 const BASE_URL = process.env.NEXT_PUBLIC_TENDER_API_BASE ?? "";
 
-/* ----------------- Tipi ----------------- */
 type Prefs = {
   regions: string[];
   cpv: string[];
   daysBack: number;
   minValue: number | null;
-  sectors: string[]; // opzionale per estensioni future
+  sectors: string[];
   notifyDaily: boolean;
 };
 
 type ApiPrefsResp = { preferences: Prefs };
 
-/* ----------------- Helpers UI ----------------- */
 function Chip({
   active,
   onClick,
@@ -51,7 +49,6 @@ function Chip({
   );
 }
 
-/* ----------------- Pagina ----------------- */
 export default function PreferencesPage() {
   const { uid, idToken } = useAuth();
   const router = useRouter();

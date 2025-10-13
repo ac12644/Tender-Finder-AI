@@ -9,14 +9,12 @@ type Prefs = {
   minValue?: number | null;
 };
 
-function todayWindow(daysBack: number) {
-  return `(publication-date >= today(-${daysBack}) AND publication-date <= today())`;
-}
-
 function qpFromPrefs(p: Prefs) {
   const parts: string[] = [];
-  parts.push(`(place-of-performance IN (ITA))`);
-  parts.push(todayWindow(Math.min(Math.max(p.daysBack ?? 7, 1), 30)));
+  parts.push(`place-of-performance = "ITA"`);
+  parts.push(
+    `publication-date >= today(-${Math.min(Math.max(p.daysBack ?? 7, 1), 30)})`
+  );
   if (p.cpv && p.cpv.length) {
     parts.push(
       `(${p.cpv.map((c) => `classification-cpv = "${c}"`).join(" OR ")})`

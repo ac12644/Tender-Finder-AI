@@ -1,13 +1,12 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { profilesCol } from "./lib/firestore.extras";
-import { tedSearch } from "./lib/ted";
-import { scoreTenderForProfile } from "./lib/ted";
-import fetch from "node-fetch";
+import { tedSearch, scoreTenderForProfile } from "./lib/ted";
+import type { UserProfile } from "./lib/models";
 
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 const FROM_EMAIL = process.env.DIGEST_FROM_EMAIL || "digest@your-app.tld";
 
-function setCors(res: any) {
+function setCors(res: { set: (key: string, value: string) => void }) {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -54,7 +53,7 @@ export const digestDaily = onRequest(
       let sent = 0;
 
       for (const doc of snap.docs) {
-        const p = doc.data() as any;
+        const p = doc.data() as Partial<UserProfile> & { email?: string };
         const email = p.email; // salva email nel profilo lato FE quando login Google
         if (!email) continue;
 
@@ -76,8 +75,19 @@ export const digestDaily = onRequest(
         const q = parts.join(" AND ");
         const notices = await tedSearch({ q, limit: 20 });
 
+        const profile: UserProfile = {
+          uid: doc.id,
+          regions: p.regions || [],
+          cpv: p.cpv || [],
+          daysBack: p.daysBack || 3,
+          minValueEUR: p.minValueEUR || null,
+          notifyMorning: p.notifyMorning || false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
         const ranked = notices
-          .map((n) => ({ n, score: scoreTenderForProfile(n, p) }))
+          .map((n) => ({ n, score: scoreTenderForProfile(n, profile) }))
           .sort((a, b) => b.score - a.score)
           .slice(0, 8);
 
@@ -123,9 +133,11 @@ export const digestDaily = onRequest(
       }
 
       res.json({ sent });
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      res.status(500).json({ error: e?.message ?? "Digest error" });
+      res
+        .status(500)
+        .json({ error: e instanceof Error ? e.message : "Digest error" });
     }
   }
 );
