@@ -6,9 +6,11 @@ type TedSearchResponse = {
   iterationNextToken?: string | null;
   timedOut?: boolean;
   errors?: any;
+  parseError?: string;
+  raw?: string;
 };
 
-const TED_URL = "https://ted.europa.eu/api/v3/notices/search";
+const TED_URL = "https://ted.europa.eu/api/v2.1/notices/search";
 const DEFAULT_FIELDS = [
   "publication-number",
   "notice-title",
@@ -69,14 +71,26 @@ export async function tedSearch({
     fields: DEFAULT_FIELDS,
   };
 
-  const json = (await fetchJson(TED_URL, {
-    method: "POST",
-    body: JSON.stringify(body),
-  })) as TedSearchResponse;
+  try {
+    const json = (await fetchJson(TED_URL, {
+      method: "POST",
+      body: JSON.stringify(body),
+    })) as TedSearchResponse;
 
-  // Occasionally the API returns nothing due to strict dates.
-  // We'll just return an array (possibly empty) and let caller decide fallbacks.
-  return Array.isArray(json.notices) ? (json.notices as any[]) : [];
+    // Check if we got HTML instead of JSON (API might be down)
+    if (json.parseError || json.raw?.includes("<html>")) {
+      console.warn("TED API returned HTML instead of JSON, API might be down");
+      return [];
+    }
+
+    // Occasionally the API returns nothing due to strict dates.
+    // We'll just return an array (possibly empty) and let caller decide fallbacks.
+    return Array.isArray(json.notices) ? (json.notices as any[]) : [];
+  } catch (error) {
+    console.error("TED API error:", error);
+    // Return empty array if API is down
+    return [];
+  }
 }
 
 export async function tedFetchXML(publicationNumber: string) {

@@ -251,6 +251,9 @@ export const agentChat = onRequest(
           .filter((m) => m.role === "user")
           .pop()
           ?.content?.toLowerCase() || "";
+
+      console.log("Last user message:", lastUserMessage);
+
       const isTenderSearch =
         lastUserMessage.includes("bando") ||
         lastUserMessage.includes("tender") ||
@@ -260,7 +263,10 @@ export const agentChat = onRequest(
         lastUserMessage.includes("servizi") ||
         lastUserMessage.includes("forniture");
 
+      console.log("Is tender search:", isTenderSearch);
+
       if (isTenderSearch) {
+        console.log("Using direct TED search bypass");
         try {
           // Direct TED search bypass
           const searchQuery = lastUserMessage
@@ -271,24 +277,52 @@ export const agentChat = onRequest(
           if (tedResults && tedResults.length > 0) {
             const formattedResults = tedResults
               .map((tender: any) => {
-                const value = tender.value
-                  ? `€ ${tender.value.toLocaleString()}`
-                  : "—";
-                const deadline = tender.deadline
-                  ? new Date(tender.deadline).toLocaleDateString("it-IT")
-                  : "—";
+                const value =
+                  tender["estimated-value-glo"] ||
+                  tender["total-value"] ||
+                  tender.value
+                    ? `€ ${(
+                        tender["estimated-value-glo"] ||
+                        tender["total-value"] ||
+                        tender.value
+                      ).toLocaleString()}`
+                    : "—";
+                const deadline =
+                  tender["deadline-date-lot"] || tender.deadline
+                    ? new Date(
+                        tender["deadline-date-lot"] || tender.deadline
+                      ).toLocaleDateString("it-IT")
+                    : "—";
                 const pdf = tender.pdf || "—";
+                const title =
+                  tender["notice-title"]?.ita ||
+                  tender["notice-title"]?.eng ||
+                  tender.title ||
+                  "—";
+                const buyer =
+                  tender["buyer-name"]?.ita?.[0] ||
+                  tender["buyer-name"]?.eng?.[0] ||
+                  tender.buyer ||
+                  "—";
+                const pubno =
+                  tender["publication-number"] || tender.pubno || "—";
 
-                return `| ${tender.title || "—"} | ${
-                  tender.buyer || "—"
-                } | ${value} | ${deadline} | ${tender.pubno || "—"} | ${pdf} |`;
+                return `| ${pubno} | ${
+                  tender["notice-identifier"] ||
+                  tender["publication-number"] ||
+                  "—"
+                } | ${buyer} | ${title} | ${
+                  tender["publication-date"] || "—"
+                } | ${deadline} | ${
+                  tender["classification-cpv"] || "—"
+                } | ${value} | ${pdf} | ${title.substring(0, 140)} |`;
               })
               .join("\n");
 
             const response =
-              `Ho trovato ${tedResults.length} bandi per "${searchQuery}":\n\n` +
-              `| Titolo | Ente | Valore | Scadenza | Pub. No. | PDF |\n` +
-              `|--------|------|--------|----------|----------|-----|\n` +
+              `Ho trovato ${tedResults.length} bandi reali per "${searchQuery}":\n\n` +
+              `| PubNo | NoticeId | Buyer | Title | Published | Deadline | CPV | Value | Pdf | Description |\n` +
+              `|-------|----------|-------|-------|-----------|----------|-----|-------|-----|-------------|\n` +
               formattedResults;
 
             res.json({

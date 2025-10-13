@@ -1,9 +1,9 @@
 {
-  "name": "public-tender-agent-langgraph",
+  "name": "bandifinder-it",
   "version": "0.1.0",
   "private": true,
   "author": {
-    "name": "Abhishek Chauhan"
+    "name": "Bandifinder.it"
   },
   "scripts": {
     "dev": "next dev --turbopack",
@@ -21,6 +21,7 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@vercel/analytics": "^1.5.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "firebase": "^12.2.1",

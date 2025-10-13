@@ -1,12 +1,12 @@
-# Tender Agent
+# Bandifinder.it
 
 > **AI-Powered Public Tender Search & Analysis Platform**
 
-Tender Agent is a sophisticated web application that leverages artificial intelligence to help users discover, analyze, and understand public tenders across Italy and the European Union. Built with modern web technologies and AI capabilities, it transforms complex tender documents into accessible, actionable insights.
+Bandifinder.it è una piattaforma web sofisticata che utilizza l'intelligenza artificiale per aiutare le aziende a scoprire, analizzare e comprendere i bandi pubblici in Italia e nell'Unione Europea. Costruita con tecnologie web moderne e capacità AI, trasforma documenti complessi di bandi in informazioni accessibili e azioni concrete.
 
 ## 🎯 Overview
 
-Tender Agent combines natural language processing with real-time data from the TED (Tenders Electronic Daily) API to provide an intuitive chat-based interface for tender discovery. Users can search for tenders using conversational queries and receive AI-generated summaries, eligibility analysis, and personalized recommendations.
+Bandifinder.it combina l'elaborazione del linguaggio naturale con dati in tempo reale dall'API TED (Tenders Electronic Daily) per fornire un'interfaccia intuitiva basata su chat per la scoperta di bandi. Gli utenti possono cercare bandi utilizzando query conversazionali e ricevere riassunti generati dall'AI, analisi di idoneità e raccomandazioni personalizzate.
 
 ## ✨ Key Features
 

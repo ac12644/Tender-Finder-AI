@@ -418,7 +418,7 @@ export default function HomePage() {
     {
       role: "assistant",
       content:
-        "Ciao! Sono il tuo Tender Agent. Dimmi cosa cerchi (es: *software* oggi in *Lombardia*).",
+        "Ciao! Sono Bandifinder.it, il tuo assistente AI per trovare i bandi pubblici più adatti alla tua azienda. Dimmi cosa cerchi (es: *software* oggi in *Lombardia*).",
     },
   ]);
   const [input, setInput] = useState("");
@@ -643,135 +643,120 @@ export default function HomePage() {
       input.trim() === "");
 
   return (
-    <div className="flex h-dvh w-full flex-col bg-white">
+    <div className="h-[90vh] w-full bg-white">
       {/* Main Content */}
-      <main className="flex-1 overflow-hidden">
-        <div className="mx-auto h-full w-full max-w-4xl px-6">
-          {/* Welcome Section */}
-          <div className="pt-12 pb-8 text-center">
-            <h1 className="text-2xl font-semibold text-gray-900 mb-2">
-              Tender Agent
-            </h1>
-            <p className="text-gray-500 text-base">
-              Trova i bandi più adatti alla tua azienda
-            </p>
-            <p className="text-gray-400 text-sm mt-1">
-              Esempio: &ldquo;bandi software Lombardia oggi&rdquo;
-            </p>
-          </div>
-
-          {/* Chat Container */}
-          <div className="flex h-[calc(100dvh-12rem)] flex-col">
-            {/* Messages Area */}
-            <div ref={scrollerRef} className="flex-1 overflow-y-auto">
-              <div className="space-y-4 pb-4">
-                {messages.map((m, i) => (
+      <div className="mx-auto h-full w-full max-w-4xl px-4">
+        {/* Chat Container */}
+        <div className="flex h-full flex-col">
+          {/* Messages Area */}
+          <div ref={scrollerRef} className="flex-1 overflow-y-auto">
+            <div className="space-y-3 pb-6 pt-2">
+              {messages.map((m, i) => (
+                <div
+                  key={i}
+                  className={`flex ${
+                    m.role === "user" ? "justify-end" : "justify-start"
+                  }`}
+                >
                   <div
-                    key={i}
-                    className={`flex ${
-                      m.role === "user" ? "justify-end" : "justify-start"
+                    className={`max-w-[85%] px-4 py-3 text-sm ${
+                      m.role === "user"
+                        ? "bg-blue-500 text-white rounded-2xl rounded-br-md shadow-sm"
+                        : "bg-gray-50 text-gray-800 rounded-2xl rounded-bl-md border border-gray-100"
                     }`}
                   >
-                    <div
-                      className={`max-w-[85%] px-4 py-3 text-sm ${
-                        m.role === "user"
-                          ? "bg-blue-500 text-white rounded-2xl rounded-br-md shadow-sm"
-                          : "bg-gray-50 text-gray-800 rounded-2xl rounded-bl-md border border-gray-100"
-                      }`}
-                    >
-                      {m.role === "assistant" ? (
-                        <AssistantMessage
-                          text={m.content}
-                          analyzeEligibility={analyzeEligibility}
-                          analyzingTender={analyzingTender}
-                        />
-                      ) : (
-                        <span className="leading-relaxed">{m.content}</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-
-                {showSuggestions && (
-                  <div className="space-y-6">
-                    {/* All suggestions combined */}
-                    {[
-                      ...personalizedSuggestions,
-                      ...aiSuggestions,
-                      ...suggestions,
-                    ].slice(0, 4).length > 0 && (
-                      <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
-                        <h3 className="text-sm font-medium text-gray-700 mb-4">
-                          Suggerimenti per te
-                        </h3>
-                        <SuggestionChips
-                          suggestions={[
-                            ...personalizedSuggestions,
-                            ...aiSuggestions,
-                            ...suggestions,
-                          ].slice(0, 4)}
-                          onPick={(s) => !loading && send(s)}
-                          disabled={loading}
-                        />
-                      </div>
-                    )}
-
-                    {/* Loading state for suggestions */}
-                    {loadingSuggestions && (
-                      <div className="flex justify-center py-8">
-                        <div className="text-sm text-gray-500 flex items-center gap-3 bg-gray-50 px-4 py-3 rounded-full border border-gray-100">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Generando suggerimenti...
-                        </div>
-                      </div>
+                    {m.role === "assistant" ? (
+                      <AssistantMessage
+                        text={m.content}
+                        analyzeEligibility={analyzeEligibility}
+                        analyzingTender={analyzingTender}
+                      />
+                    ) : (
+                      <span className="leading-relaxed">{m.content}</span>
                     )}
                   </div>
-                )}
+                </div>
+              ))}
 
-                {loading && (
-                  <div className="flex justify-start">
-                    <div className="bg-gray-50 rounded-2xl px-4 py-3 text-sm inline-flex items-center gap-3 border border-gray-100">
-                      <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-                      <span className="text-gray-600">Sto cercando bandi…</span>
+              {showSuggestions && (
+                <div className="space-y-6">
+                  {/* All suggestions combined */}
+                  {[
+                    ...personalizedSuggestions,
+                    ...aiSuggestions,
+                    ...suggestions,
+                  ].slice(0, 4).length > 0 && (
+                    <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
+                      <h3 className="text-sm font-medium text-gray-700 mb-4">
+                        Suggerimenti per te
+                      </h3>
+                      <SuggestionChips
+                        suggestions={[
+                          ...personalizedSuggestions,
+                          ...aiSuggestions,
+                          ...suggestions,
+                        ].slice(0, 4)}
+                        onPick={(s) => !loading && send(s)}
+                        disabled={loading}
+                      />
                     </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Input Area */}
-            <div className="border-t border-gray-100 bg-white px-6 py-4">
-              <div className="flex items-center gap-3">
-                <Input
-                  placeholder="Scrivi la tua richiesta…"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      send();
-                    }
-                  }}
-                  className="flex-1 h-12 px-4 text-base border border-gray-200 rounded-full focus:border-blue-500 focus:ring-0 bg-gray-50 focus:bg-white transition-colors"
-                  aria-label="Messaggio per Tender Agent"
-                />
-                <Button
-                  onClick={() => send()}
-                  disabled={loading || !input.trim()}
-                  className="h-12 w-12 rounded-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 shadow-sm transition-all duration-200"
-                  aria-label="Invia messaggio"
-                >
-                  {loading ? (
-                    <Loader2 className="h-5 w-5 animate-spin text-white" />
-                  ) : (
-                    <ArrowRight className="h-5 w-5 text-white" />
                   )}
-                </Button>
-              </div>
+
+                  {/* Loading state for suggestions */}
+                  {loadingSuggestions && (
+                    <div className="flex justify-center py-8">
+                      <div className="text-sm text-gray-500 flex items-center gap-3 bg-gray-50 px-4 py-3 rounded-full border border-gray-100">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Generando suggerimenti...
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {loading && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-50 rounded-2xl px-4 py-3 text-sm inline-flex items-center gap-3 border border-gray-100">
+                    <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                    <span className="text-gray-600">Sto cercando bandi…</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Input Footer - Fixed at bottom */}
+          <div className="flex-shrink-0 border-t border-gray-100 bg-white px-4 py-3">
+            <div className="flex items-center gap-3">
+              <Input
+                placeholder="Cerca bandi pubblici per la tua azienda…"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    send();
+                  }
+                }}
+                className="flex-1 h-12 px-4 text-base border border-gray-200 rounded-full focus:border-blue-500 focus:ring-0 bg-gray-50 focus:bg-white transition-colors"
+                aria-label="Messaggio per Bandifinder.it"
+              />
+              <Button
+                onClick={() => send()}
+                disabled={loading || !input.trim()}
+                className="h-12 w-12 rounded-full bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 shadow-sm transition-all duration-200"
+                aria-label="Invia messaggio"
+              >
+                {loading ? (
+                  <Loader2 className="h-5 w-5 animate-spin text-white" />
+                ) : (
+                  <ArrowRight className="h-5 w-5 text-white" />
+                )}
+              </Button>
             </div>
           </div>
         </div>
-      </main>
+      </div>
     </div>
   );
 }

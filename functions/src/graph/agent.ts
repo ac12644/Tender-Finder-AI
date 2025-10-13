@@ -6,7 +6,6 @@ import {
 } from "@langchain/langgraph";
 import { createReactAgent, withAgentName } from "@langchain/langgraph/prebuilt";
 import type { LanguageModelLike } from "@langchain/core/language_models/base";
-import { SystemMessage } from "@langchain/core/messages";
 
 import { llmFactory } from "../lib/llm";
 import {
@@ -71,15 +70,6 @@ export const agent = createReactAgent({
   llm: llmProvider,
   tools,
   name: "tender_agent",
-  messageModifier: async (messages) => {
-    // Force tool calls by prepending a system message
-    return [
-      new SystemMessage(
-        "You MUST use tools to answer user requests. Call build_ted_query then search_tenders."
-      ),
-      ...messages,
-    ];
-  },
   prompt: [
     "You are a TED tender search assistant. You MUST use the available tools to search for tenders.",
     "CRITICAL: When users ask for tenders, you MUST call the tools in this exact order:",

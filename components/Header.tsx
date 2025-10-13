@@ -12,7 +12,7 @@ export function Header() {
           <div className="flex items-center gap-3">
             <Bot className="h-7 w-7 text-blue-500" />
             <Link href="/" className="text-xl font-semibold text-gray-900">
-              Tender Agent
+              Bandifinder.it
             </Link>
           </div>
           <nav className="flex items-center gap-1">
