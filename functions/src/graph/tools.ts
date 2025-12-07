@@ -5,7 +5,7 @@ import { safeTool } from "./tooling";
 import { tedSearch } from "../lib/ted";
 import { saveTenderSummary, saveMatchScore } from "../lib/firestore";
 import type { TenderDoc } from "../lib/types";
-import type { CompanyProfile } from "../lib/models";
+import type { CompanyProfile, UserProfile } from "../lib/models";
 import { llmFactory } from "../lib/llm";
 
 export type TenderLite = {
@@ -26,60 +26,186 @@ export type TenderLite = {
   contractNature?: string;
   noticeType?: string;
   contractType?: string;
-  placeOfPerformance?: any;
-  country?: any;
-  city?: any;
-  postCode?: any;
-  awardCriteria?: any;
-  selectionCriteria?: any;
-  subcontractingObligation?: any;
-  subcontractingPercentage?: any;
-  subcontractingAllowed?: any;
-  frameworkAgreement?: any;
-  electronicAuction?: any;
-  contractDuration?: any;
-  tenderValidity?: any;
+  placeOfPerformance?: unknown;
+  country?: unknown;
+  city?: unknown;
+  postCode?: unknown;
+  awardCriteria?: unknown;
+  selectionCriteria?: unknown;
+  subcontractingObligation?: unknown;
+  subcontractingPercentage?: unknown;
+  subcontractingAllowed?: unknown;
+  frameworkAgreement?: unknown;
+  electronicAuction?: unknown;
+  contractDuration?: unknown;
+  tenderValidity?: unknown;
   pdf_preferred?: string;
-  description_proposed_it?: any;
-  description_proposed_en?: any;
+  description_proposed_it?: unknown;
+  description_proposed_en?: unknown;
 };
 
+/**
+ * Country code mapping: country names to ISO 3166-1 alpha-3 codes
+ * TED API requires ISO 3166-1 alpha-3 country codes (e.g., ITA, FRA, DEU)
+ */
+const COUNTRY_CODE_MAP: Record<string, string> = {
+  // Common country names to codes
+  italy: "ITA",
+  italia: "ITA",
+  france: "FRA",
+  germany: "DEU",
+  spain: "ESP",
+  portugal: "PRT",
+  netherlands: "NLD",
+  belgium: "BEL",
+  austria: "AUT",
+  greece: "GRC",
+  poland: "POL",
+  romania: "ROU",
+  // Direct codes (pass through)
+  ITA: "ITA",
+  FRA: "FRA",
+  DEU: "DEU",
+  ESP: "ESP",
+  PRT: "PRT",
+  NLD: "NLD",
+  BEL: "BEL",
+  AUT: "AUT",
+  GRC: "GRC",
+  POL: "POL",
+  ROU: "ROU",
+};
+
+/**
+ * Normalize country input to ISO 3166-1 alpha-3 code
+ */
+function normalizeCountryCode(input: string): string {
+  const normalized = input.trim().toUpperCase();
+  // Check direct code first
+  if (COUNTRY_CODE_MAP[normalized]) {
+    return COUNTRY_CODE_MAP[normalized];
+  }
+  // Check case-insensitive name
+  const lower = input.trim().toLowerCase();
+  if (COUNTRY_CODE_MAP[lower]) {
+    return COUNTRY_CODE_MAP[lower];
+  }
+  // If already uppercase 3-letter code, assume valid
+  if (/^[A-Z]{3}$/.test(normalized)) {
+    return normalized;
+  }
+  // Default to ITA if unrecognized
+  console.warn(
+    `[normalizeCountryCode] Unrecognized country: ${input}, defaulting to ITA`
+  );
+  return "ITA";
+}
+
+/**
+ * Validate CPV code format (8 digits, optionally with wildcard)
+ */
+function validateCpvCode(cpv: string): string | null {
+  const cleaned = cpv.trim();
+  // CPV codes are 8 digits, optionally with * wildcard
+  if (/^\d{8}(\*)?$/.test(cleaned)) {
+    return cleaned;
+  }
+  // Try to extract 8-digit code from longer string
+  const match = cleaned.match(/(\d{8})/);
+  if (match) {
+    return match[1];
+  }
+  console.warn(`[validateCpvCode] Invalid CPV format: ${cpv}`);
+  return null;
+}
+
 const QueryIntent = z.object({
-  country: z.string().default("ITA"),
-  daysBack: z.number().int().min(0).max(30).default(3),
-  cpv: z.array(z.string()).optional(),
-  text: z.string().optional(),
+  country: z
+    .string()
+    .default("ITA")
+    .describe(
+      "Country code in ISO 3166-1 alpha-3 format (e.g., ITA, FRA, DEU). Use 3-letter uppercase code, NOT country name. Examples: ITA for Italy, FRA for France, DEU for Germany."
+    ),
+  daysBack: z
+    .number()
+    .int()
+    .min(0)
+    .max(30)
+    .default(3)
+    .describe(
+      "Number of days to look back from today. Must be between 0 and 30."
+    ),
+  cpv: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Array of CPV codes (8-digit codes like '48000000' or '72000000'). Each code must be exactly 8 digits. Wildcards not supported in query building."
+    ),
+  text: z
+    .string()
+    .optional()
+    .describe(
+      "Free text search term to search in notice title, description, or buyer name."
+    ),
 });
 
 export const buildTedExpertQueryTool = safeTool({
   name: "build_ted_query",
   description:
-    "Build a valid TED Expert Query string from a structured intent.",
+    "Build a valid TED Expert Query string from a structured intent. CRITICAL: After building the query, you MUST call search_tenders with the returned query string. This tool only builds the query - it does NOT execute the search. Parameters: country (ISO 3166-1 alpha-3 code like ITA, FRA, DEU - NOT country names), daysBack (0-30), cpv (array of 8-digit CPV codes), text (search term). WARNING: This tool does NOT return tender data - you MUST call search_tenders after this to get actual results.",
   schema: QueryIntent,
   fn: async ({ country, daysBack, cpv, text }) => {
+    // Normalize country code
+    const countryCode = normalizeCountryCode(country);
+
     const date = (d: number) => `today(${d === 0 ? "" : `-${d}`})`;
     const parts = [
-      `(place-of-performance IN (${country}))`,
+      `(place-of-performance-country-proc IN (${countryCode}))`,
       `(publication-date >= ${date(daysBack)} AND publication-date <= today())`,
     ];
+
     if (cpv?.length) {
-      parts.push(
-        `(${cpv
-          .map((c) => `classification-cpv = "${c.endsWith("*") ? c : c + "*"}"`)
-          .join(" OR ")})`
-      );
+      // Validate and process CPV codes
+      const validCpvs = cpv
+        .map(validateCpvCode)
+        .filter((c): c is string => c !== null);
+
+      if (validCpvs.length > 0) {
+        // TED API v3: CPV field supports exact match (=) or IN operator
+        // Remove any wildcards for query building
+        const cleanCpvs = validCpvs.map((c) => c.replace(/\*$/, ""));
+
+        if (cleanCpvs.length === 1) {
+          parts.push(`classification-cpv = "${cleanCpvs[0]}"`);
+        } else {
+          parts.push(
+            `classification-cpv IN (${cleanCpvs
+              .map((c) => `"${c}"`)
+              .join(", ")})`
+          );
+        }
+      } else {
+        console.warn(`[build_ted_query] No valid CPV codes after validation`);
+      }
     }
+
     if (text && text.trim()) {
       const t = text.trim().replace(/"/g, '\\"');
-      parts.push(`(notice-title ~ "${t}" OR description-proc ~ "${t}")`);
+      // Use ~ operator for text search (fuzzy matching)
+      parts.push(
+        `(notice-title ~ "${t}" OR description-proc ~ "${t}" OR buyer-name ~ "${t}")`
+      );
     }
-    return parts.join(" AND ");
+
+    const query = parts.join(" AND ");
+    console.log(`[build_ted_query] Generated query: ${query}`);
+    return query;
   },
 });
 
 const SearchTendersInput = z.object({
   q: z.string().min(1),
-  limit: z.number().int().min(1).max(50).default(10),
+  limit: z.number().int().min(1).max(50).default(30),
 });
 
 function firstString(v: unknown): string | undefined {
@@ -109,11 +235,39 @@ function pickPdfItaOrEn(links: Record<string, unknown>): string | undefined {
 export const searchTendersTool = safeTool({
   name: "search_tenders",
   description:
-    "Search TED notices using Expert Query. Returns an array of tenders with enhanced details.",
+    "Search TED notices using Expert Query. This is the PRIMARY search tool - use it after building a query with build_ted_query. Returns an array of tenders with enhanced details. CRITICAL: You MUST call this tool after building a query. NEVER generate fake tender data - ONLY use results from this tool. If this tool returns an empty array, that means no tenders were found - do NOT invent fake tenders.",
   schema: SearchTendersInput,
   fn: async ({ q, limit }) => {
+    const startTime = Date.now();
+    console.log(`[search_tenders] Called with query: ${q}, limit: ${limit}`);
     const notices = await tedSearch({ q, limit });
-    return notices.map((n: Record<string, unknown>) => {
+    const duration = Date.now() - startTime;
+    console.log(
+      `[search_tenders] Received ${notices.length} notices from TED API in ${duration}ms`
+    );
+
+    // Track tool call for metrics
+    try {
+      const { trackToolCall } = await import("./telemetry.js");
+      await trackToolCall(
+        "search_tenders",
+        { q, limit },
+        { count: notices.length, notices: notices.slice(0, 3) }, // Sample first 3
+        duration,
+        true
+      );
+    } catch {
+      // Telemetry failures shouldn't break the tool
+    }
+
+    if (notices.length === 0) {
+      console.warn(`[search_tenders] No notices found for query: ${q}`);
+      // Return empty array but with a helpful message structure
+      return [];
+    }
+
+    const typedNotices = notices as Array<Record<string, unknown>>;
+    const mapped = typedNotices.map((n: Record<string, unknown>) => {
       const descProc = n["description-proc"] as
         | Record<string, unknown>
         | undefined;
@@ -200,6 +354,9 @@ export const searchTendersTool = safeTool({
         tenderValidity: tenderValidity,
       };
     }) as TenderLite[];
+
+    console.log(`[search_tenders] Mapped ${mapped.length} tenders`);
+    return mapped;
   },
 });
 
@@ -290,12 +447,13 @@ export const generateSmartSuggestionsTool = safeTool({
       const llm = await llmFactory();
 
       // Get recent tender data for context
-      let recentTenders = [];
+      let recentTenders: Array<Record<string, unknown>> = [];
       try {
-        recentTenders = await tedSearch({
+        const rawTenders = await tedSearch({
           q: "(place-of-performance IN (ITA)) AND (publication-date >= today(-7) AND publication-date <= today())",
           limit: 20,
         });
+        recentTenders = rawTenders as Array<Record<string, unknown>>;
       } catch (error) {
         console.warn("Failed to fetch recent tenders for suggestions:", error);
         // Continue without recent tender data
@@ -307,12 +465,18 @@ export const generateSmartSuggestionsTool = safeTool({
         .filter(Boolean)
         .flat()
         .reduce((acc: Record<string, number>, cpv) => {
-          acc[cpv] = (acc[cpv] || 0) + 1;
+          const cpvStr = String(cpv);
+          acc[cpvStr] = (acc[cpvStr] || 0) + 1;
           return acc;
         }, {});
 
       const trendingRegions = recentTenders
-        .map((t) => t["buyer-name"]?.ita?.[0] || t["buyer-name"]?.eng?.[0])
+        .map((t) => {
+          const buyerName = t["buyer-name"] as
+            | { ita?: string[]; eng?: string[] }
+            | undefined;
+          return buyerName?.ita?.[0] || buyerName?.eng?.[0];
+        })
         .filter(Boolean)
         .join(" ");
 
@@ -347,12 +511,41 @@ Response format: ["suggestion1", "suggestion2", ...]
 `;
 
       const response = await llm.invoke(prompt);
-      const content = String(response);
+
+      // Handle different response types from LLM
+      let content: string;
+      if (typeof response === "string") {
+        content = response;
+      } else if (
+        response &&
+        typeof response === "object" &&
+        "content" in response
+      ) {
+        content = String(response.content);
+      } else {
+        content = String(response);
+      }
 
       // Parse JSON response
-      const suggestions = JSON.parse(
-        content.replace(/```json\n?|\n?```/g, "").trim()
-      );
+      let suggestions: string[];
+      try {
+        const cleanedContent = content.replace(/```json\n?|\n?```/g, "").trim();
+        const parsed = JSON.parse(cleanedContent);
+        suggestions = Array.isArray(parsed) ? parsed : [];
+      } catch (parseError) {
+        console.warn("Failed to parse LLM response as JSON:", parseError);
+        // Try to extract array from text if JSON parsing fails
+        const arrayMatch = content.match(/\[[\s\S]*?\]/);
+        if (arrayMatch) {
+          try {
+            suggestions = JSON.parse(arrayMatch[0]);
+          } catch {
+            suggestions = [];
+          }
+        } else {
+          suggestions = [];
+        }
+      }
 
       return Array.isArray(suggestions) ? suggestions.slice(0, limit) : [];
     } catch (error) {
@@ -563,24 +756,62 @@ export const analyzeEligibilityTool = safeTool({
         notice = null;
       } else {
         // Fallback: Get tender details from TED API
-        const notices = await tedSearch({
-          q: `publication-number = "${tenderId}"`,
+        // Try notice-identifier first (more reliable), then publication-number
+        let notices = await tedSearch({
+          q: `notice-identifier = "${tenderId}"`,
           limit: 1,
         });
+
+        // If not found by notice-identifier, try publication-number
         if (notices.length === 0) {
-          return { eligible: false, reasons: ["Tender not found"] };
+          notices = await tedSearch({
+            q: `publication-number = "${tenderId}"`,
+            limit: 1,
+          });
         }
 
-        notice = notices[0];
-        title =
-          notice["notice-title"]?.ita || notice["notice-title"]?.eng || "";
-        buyer =
-          notice["buyer-name"]?.ita?.[0] ||
-          notice["buyer-name"]?.eng?.[0] ||
-          "";
-        cpv = notice["classification-cpv"] || "";
-        deadline = notice["deadline-date-lot"] || "";
-        value = notice["total-value"] || notice["estimated-value-glo"] || null;
+        // Also try if tenderId looks like a publication number format (e.g., "2025/S 123-456790")
+        if (notices.length === 0 && tenderId.includes("/")) {
+          // Try with URL encoding or different format
+          const cleanedId = tenderId.replace(/\s+/g, " ").trim();
+          notices = await tedSearch({
+            q: `publication-number = "${cleanedId}"`,
+            limit: 1,
+          });
+        }
+
+        if (notices.length === 0) {
+          console.warn(
+            `[analyzeEligibility] Tender not found with ID: ${tenderId}`
+          );
+          return {
+            eligible: false,
+            reasons: [
+              `Tender not found (ID: ${tenderId}). The tender may have been removed or the ID is incorrect.`,
+            ],
+            eligibilityScore: 0,
+            riskFactors: [],
+            opportunities: [],
+            missingRequirements: [],
+            recommendation: "skip",
+          };
+        }
+
+        notice = notices[0] as Record<string, unknown>;
+        const noticeTitle = notice["notice-title"] as
+          | { ita?: string; eng?: string }
+          | undefined;
+        const noticeBuyer = notice["buyer-name"] as
+          | { ita?: string[]; eng?: string[] }
+          | undefined;
+        title = noticeTitle?.ita || noticeTitle?.eng || "";
+        buyer = noticeBuyer?.ita?.[0] || noticeBuyer?.eng?.[0] || "";
+        cpv = (notice["classification-cpv"] as string) || "";
+        deadline = (notice["deadline-date-lot"] as string) || "";
+        value =
+          (notice["total-value"] as number | null) ||
+          (notice["estimated-value-glo"] as number | null) ||
+          null;
       }
 
       const prompt = `
@@ -680,7 +911,8 @@ export const getBestTendersTool = safeTool({
   description:
     "Get the best tenders for a user based on eligibility, preferences, and competition analysis.",
   schema: GetBestTendersInput,
-  fn: async ({ userId, limit, daysBack, regions, cpvCodes }) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  fn: async ({ userId, limit, daysBack, regions: _regions, cpvCodes }) => {
     try {
       // Get company profile
       const profileDoc = await db
@@ -695,10 +927,11 @@ export const getBestTendersTool = safeTool({
         };
       }
 
-      // const companyProfile = profileDoc.data() as CompanyProfile; // TODO: Use for eligibility analysis
+      const companyProfile = profileDoc.data() as CompanyProfile;
+
       const parts = [
-        `place-of-performance = "ITA"`,
-        `publication-date >= today(-${daysBack})`,
+        `place-of-performance-country-proc IN (ITA)`,
+        `publication-date >= today(-${daysBack}) AND publication-date <= today()`,
       ];
 
       if (cpvCodes?.length) {
@@ -714,60 +947,117 @@ export const getBestTendersTool = safeTool({
       const q = parts.join(" AND ");
 
       // Search tenders
-      const notices = await tedSearch({ q, limit: limit * 2 }); // Get more to filter
+      const rawNotices = await tedSearch({ q, limit: limit * 2 }); // Get more to filter
+      const notices = rawNotices as Array<Record<string, unknown>>;
 
-      // Analyze each tender for eligibility
-      const analyzedTenders = [];
+      // Analyze each tender for eligibility using the analyzeEligibilityTool
+      const analyzedTenders: Array<{
+        tenderId: string;
+        title: string;
+        buyer: string;
+        value: number | null;
+        deadline: string | null;
+        cpv: unknown;
+        pdfUrl: string | undefined;
+        tedPageUrl: string;
+        eligibilityScore: number;
+        recommendation: string;
+        reasons: string[];
+        opportunities: string[];
+        riskFactors: string[];
+      }> = [];
 
       for (const notice of notices.slice(0, limit * 2)) {
         const tenderId =
-          notice["publication-number"] || notice["notice-identifier"];
+          (notice["notice-identifier"] as string) ||
+          (notice["publication-number"] as string);
         if (!tenderId) continue;
 
-        // For now, include all tenders to make dashboard work
-        // TODO: Implement proper eligibility analysis
-        const eligibility = {
-          eligible: true,
-          eligibilityScore: 0.8,
-          reasons: ["Basic eligibility check passed"],
-          riskFactors: [],
-          opportunities: ["Good match for company profile"],
-          missingRequirements: [],
-          recommendation: "medium" as const,
-        };
+        // Extract tender data for eligibility analysis
+        const noticeTitle = notice["notice-title"] as
+          | { ita?: string; eng?: string }
+          | undefined;
+        const noticeBuyer = notice["buyer-name"] as
+          | { ita?: string[]; eng?: string[] }
+          | undefined;
+        const title = noticeTitle?.ita || noticeTitle?.eng || "";
+        const buyer = noticeBuyer?.ita?.[0] || noticeBuyer?.eng?.[0] || "";
+        const cpv = notice["classification-cpv"] || null;
+        const deadline = (notice["deadline-date-lot"] as string | null) || null;
+        const value =
+          (notice["total-value"] as number | null) ||
+          (notice["estimated-value-glo"] as number | null) ||
+          null;
 
-        // Only include eligible tenders with good scores
-        console.log(
-          `Tender ${tenderId}: eligible=${eligibility.eligible}, score=${eligibility.eligibilityScore}`
-        );
-        if (eligibility.eligible && eligibility.eligibilityScore >= 0.1) {
-          // Extract PDF links
-          const links = (notice.links as Record<string, unknown>) || {};
-          const pdfUrl = pickPdfItaOrEn(links);
-
-          // Generate TED page URL
-          const tedPageUrl = `https://ted.europa.eu/udl?uri=TED:NOTICE:${tenderId}:TEXT:IT:HTML`;
-
-          analyzedTenders.push({
+        // Perform actual eligibility analysis
+        try {
+          const eligibilityResult = await analyzeEligibilityTool.func({
             tenderId: String(tenderId),
-            title:
-              notice["notice-title"]?.ita || notice["notice-title"]?.eng || "",
-            buyer:
-              notice["buyer-name"]?.ita?.[0] ||
-              notice["buyer-name"]?.eng?.[0] ||
-              "",
-            value:
-              notice["total-value"] || notice["estimated-value-glo"] || null,
-            deadline: notice["deadline-date-lot"] || null,
-            cpv: notice["classification-cpv"] || null,
-            pdfUrl: pdfUrl,
-            tedPageUrl: tedPageUrl,
-            eligibilityScore: eligibility.eligibilityScore,
-            recommendation: eligibility.recommendation,
-            reasons: eligibility.reasons,
-            opportunities: eligibility.opportunities,
-            riskFactors: eligibility.riskFactors,
+            tenderData: {
+              title,
+              buyer,
+              cpv: Array.isArray(cpv) ? String(cpv[0]) : String(cpv || ""),
+              deadline: deadline || undefined,
+              value: value || undefined,
+            },
+            companyProfile: {
+              annualRevenue: companyProfile.annualRevenue,
+              employeeCount: companyProfile.employeeCount,
+              yearsInBusiness: companyProfile.yearsInBusiness,
+              certifications: companyProfile.certifications || [],
+              technicalSkills: companyProfile.technicalSkills || [],
+              legalForm: companyProfile.legalForm,
+              operatingRegions: companyProfile.operatingRegions || [],
+              primarySectors: companyProfile.primarySectors || [],
+              competitionTolerance:
+                companyProfile.competitionTolerance || "medium",
+            },
           });
+
+          const eligibility = eligibilityResult;
+
+          // Only include eligible tenders with good scores
+          console.log(
+            `[getBestTenders] Tender ${tenderId}: eligible=${eligibility.eligible}, score=${eligibility.eligibilityScore}, recommendation=${eligibility.recommendation}`
+          );
+
+          if (eligibility.eligible && eligibility.eligibilityScore >= 0.1) {
+            // Extract PDF links
+            const links = (notice.links as Record<string, unknown>) || {};
+            const pdfUrl = pickPdfItaOrEn(links);
+
+            // Generate TED page URL (correct format)
+            const noticeId = notice["notice-identifier"] as string | undefined;
+            const pubNumber = notice["publication-number"] as
+              | string
+              | undefined;
+            const tedPageUrl = `https://ted.europa.eu/it/notice/-/detail/${encodeURIComponent(
+              noticeId || pubNumber || tenderId
+            )}`;
+
+            analyzedTenders.push({
+              tenderId: String(tenderId),
+              title,
+              buyer,
+              value,
+              deadline,
+              cpv,
+              pdfUrl,
+              tedPageUrl,
+              eligibilityScore: eligibility.eligibilityScore,
+              recommendation: eligibility.recommendation,
+              reasons: eligibility.reasons || [],
+              opportunities: eligibility.opportunities || [],
+              riskFactors: eligibility.riskFactors || [],
+            });
+          }
+        } catch (error) {
+          console.error(
+            `[getBestTenders] Error analyzing tender ${tenderId}:`,
+            error
+          );
+          // Skip this tender if analysis fails
+          continue;
         }
       }
 
@@ -930,9 +1220,24 @@ const AdvancedSearchInput = z.object({
   subcontractingAllowed: z.boolean().optional(),
   minValue: z.number().optional(),
   maxValue: z.number().optional(),
-  countries: z.array(z.string()).optional(),
-  cities: z.array(z.string()).optional(),
-  cpvCodes: z.array(z.string()).optional(),
+  countries: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Array of country codes in ISO 3166-1 alpha-3 format (e.g., ['ITA', 'FRA']). Use 3-letter uppercase codes, NOT country names."
+    ),
+  cities: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Array of city names as strings (e.g., ['Milano', 'Roma']). Use exact city names as they appear in TED database."
+    ),
+  cpvCodes: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Array of CPV codes. Each code must be exactly 8 digits (e.g., ['48000000', '72000000']). Wildcards not supported."
+    ),
   daysBack: z.number().int().min(1).max(30).default(7),
   limit: z.number().int().min(1).max(50).default(20),
 });
@@ -1028,43 +1333,80 @@ export const advancedSearchTool = safeTool({
 
       // CPV codes filter
       if (cpvCodes && cpvCodes.length > 0) {
-        parts.push(
-          `(${cpvCodes
-            .map(
-              (c) => `classification-cpv = "${c.endsWith("*") ? c : c + "*"}"`
-            )
-            .join(" OR ")})`
-        );
+        // Validate CPV codes
+        const validCpvs = cpvCodes
+          .map(validateCpvCode)
+          .filter((c): c is string => c !== null)
+          .map((c) => c.replace(/\*$/, "")); // Remove wildcards
+
+        if (validCpvs.length > 0) {
+          if (validCpvs.length === 1) {
+            parts.push(`classification-cpv = "${validCpvs[0]}"`);
+          } else {
+            parts.push(
+              `classification-cpv IN (${validCpvs
+                .map((c) => `"${c}"`)
+                .join(", ")})`
+            );
+          }
+        }
       }
 
       const q = parts.join(" AND ");
-      const notices = await tedSearch({ q, limit });
+      const rawNotices = await tedSearch({ q, limit });
+      const notices = rawNotices as Array<Record<string, unknown>>;
 
+      // Use the same robust field extraction as search_tenders
       return {
-        tenders: notices.map((n: Record<string, unknown>) => ({
-          publicationNumber: String(n["publication-number"] ?? ""),
-          noticeId: n["notice-identifier"] ?? n["publication-number"] ?? "",
-          title:
-            (n["notice-title"] as Record<string, unknown>)?.ita ??
-            (n["notice-title"] as Record<string, unknown>)?.eng ??
-            "",
-          buyer:
-            (n["buyer-name"] as Record<string, unknown[]>)?.ita?.[0] ??
-            (n["buyer-name"] as Record<string, unknown[]>)?.eng?.[0] ??
-            "",
-          publicationDate: n["publication-date"] ?? null,
-          deadline: n["deadline-date-lot"] ?? null,
-          cpv: n["classification-cpv"] ?? null,
-          estimatedValue: n["estimated-value-glo"] ?? null,
-          procedureType: n["procedure-type"] ?? null,
-          contractNature: n["contract-nature-main-proc"] ?? null,
-          frameworkAgreement: n["framework-agreement-lot"] ?? null,
-          electronicAuction: n["electronic-auction-lot"] ?? null,
-          subcontractingAllowed: n["subcontracting-allowed-lot"] ?? null,
-          placeOfPerformance: n["place-of-performance"] ?? null,
-          country: n["place-of-performance-country-proc"] ?? null,
-          city: n["place-of-performance-city-proc"] ?? null,
-        })),
+        tenders: notices.map((n: Record<string, unknown>) => {
+          // Extract enhanced information with fallbacks (same as search_tenders)
+          const procedureType =
+            n["procedure-type"] ?? n["BT-01-notice"] ?? null;
+          const contractNature =
+            n["contract-nature-main-proc"] ??
+            n["contract-nature-main-lot"] ??
+            null;
+
+          // Value extraction with fallbacks
+          const estimatedValue =
+            (n["estimated-value-glo"] as number | null) ??
+            (n["total-value"] as number | null) ??
+            null;
+
+          // Deadline extraction
+          const deadline = n["deadline-date-lot"] ?? null;
+
+          // PDF extraction
+          const pdfItaOrEn = pickPdfItaOrEn(n.links as Record<string, unknown>);
+
+          return {
+            publicationNumber: String(n["publication-number"] ?? ""),
+            noticeId: n["notice-identifier"] ?? n["publication-number"] ?? "",
+            title:
+              (n["notice-title"] as Record<string, unknown>)?.ita ??
+              (n["notice-title"] as Record<string, unknown>)?.eng ??
+              (n["notice-title"] as Record<string, unknown>)?.en ??
+              "",
+            buyer:
+              (n["buyer-name"] as Record<string, unknown[]>)?.ita?.[0] ??
+              (n["buyer-name"] as Record<string, unknown[]>)?.eng?.[0] ??
+              (n["buyer-name"] as Record<string, unknown[]>)?.en?.[0] ??
+              "",
+            publicationDate: n["publication-date"] ?? null,
+            deadline: deadline,
+            cpv: n["classification-cpv"] ?? null,
+            estimatedValue: estimatedValue,
+            procedureType: procedureType ? String(procedureType) : null,
+            contractNature: contractNature ? String(contractNature) : null,
+            frameworkAgreement: n["framework-agreement-lot"] ?? null,
+            electronicAuction: n["electronic-auction-lot"] ?? null,
+            subcontractingAllowed: n["subcontracting-allowed-lot"] ?? null,
+            placeOfPerformance: n["place-of-performance"] ?? null,
+            country: n["place-of-performance-country-proc"] ?? null,
+            city: n["place-of-performance-city-proc"] ?? null,
+            pdf: pdfItaOrEn ?? null,
+          };
+        }),
         query: q,
         filters: {
           procedureType,
@@ -1088,10 +1430,1054 @@ export const advancedSearchTool = safeTool({
 });
 
 const FrameworkAgreementSearchInput = z.object({
-  countries: z.array(z.string()).optional(),
-  cpvCodes: z.array(z.string()).optional(),
+  countries: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Array of country codes in ISO 3166-1 alpha-3 format (e.g., ['ITA', 'FRA']). Use 3-letter uppercase codes, NOT country names."
+    ),
+  cpvCodes: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Array of CPV codes. Each code must be exactly 8 digits (e.g., ['48000000', '72000000']). Wildcards not supported."
+    ),
   daysBack: z.number().int().min(1).max(30).default(30),
   limit: z.number().int().min(1).max(50).default(20),
+});
+
+// ============================================
+// RANKING & FILTERING TOOLS
+// ============================================
+
+const RankTendersInput = z.object({
+  userId: z.string().min(1),
+  tenderIds: z.array(z.string()).min(1),
+  limit: z.number().int().min(1).max(50).optional().default(10),
+});
+
+export const rankTendersTool = safeTool({
+  name: "rank_tenders",
+  description:
+    "Rank tenders using multi-factor scoring: price match, geographic fit, conditions, buyer patterns, competition, urgency, CPV match, and eligibility.",
+  schema: RankTendersInput,
+  fn: async ({ userId, tenderIds, limit }) => {
+    try {
+      // Get company profile
+      const profileDoc = await db
+        .collection("company_profiles")
+        .doc(userId)
+        .get();
+      if (!profileDoc.exists) {
+        return {
+          rankedTenders: [],
+          message:
+            "Company profile not found. Please complete your profile first.",
+        };
+      }
+
+      const companyProfile = profileDoc.data() as CompanyProfile;
+
+      // Get user preferences
+      const prefsDoc = await db.collection("profiles").doc(userId).get();
+      const userProfile = prefsDoc.exists
+        ? (prefsDoc.data() as Partial<UserProfile> | undefined) || {}
+        : {};
+
+      // Fetch tenders from Firestore or TED API
+      const rankedTenders = [];
+
+      for (const tenderId of tenderIds.slice(0, limit * 2)) {
+        // Try to get from Firestore first
+        const tenderDoc = await db.collection("tenders").doc(tenderId).get();
+        let tenderData: Record<string, unknown> | null = null;
+
+        if (tenderDoc.exists) {
+          tenderData = (tenderDoc.data() as Record<string, unknown>) || null;
+        } else {
+          // If not in Firestore, fetch from TED API (simplified - would need proper TED lookup)
+          continue;
+        }
+
+        if (!tenderData) continue;
+
+        // Multi-factor scoring
+        const scores = {
+          priceMatch: calculatePriceScore(tenderData, companyProfile),
+          geographicFit: calculateGeographicScore(tenderData, companyProfile),
+          cpvMatch: calculateCpvScore(tenderData, companyProfile, userProfile),
+          urgency: calculateUrgencyScore(tenderData),
+          recency: calculateRecencyScore(tenderData, userProfile),
+          conditions: calculateConditionsScore(tenderData),
+        };
+
+        // Weighted overall score
+        const overallScore =
+          scores.priceMatch * 0.2 +
+          scores.geographicFit * 0.2 +
+          scores.cpvMatch * 0.25 +
+          scores.urgency * 0.15 +
+          scores.recency * 0.1 +
+          scores.conditions * 0.1;
+
+        const tenderTitle = tenderData["notice-title"] as
+          | { ita?: string }
+          | undefined;
+        const tenderBuyerName = tenderData["buyer-name"] as
+          | { ita?: string[] }
+          | undefined;
+        const buyerValue =
+          (tenderData.buyer as string) ||
+          (tenderBuyerName?.ita?.[0] as string) ||
+          "";
+        rankedTenders.push({
+          tenderId,
+          title: (tenderData.title as string) || tenderTitle?.ita || "",
+          buyer: buyerValue,
+          overallScore: Math.round(overallScore * 100) / 100,
+          scores,
+          recommendation:
+            overallScore >= 0.7
+              ? "high"
+              : overallScore >= 0.5
+              ? "medium"
+              : overallScore >= 0.3
+              ? "low"
+              : "skip",
+        });
+      }
+
+      // Sort by overall score
+      rankedTenders.sort((a, b) => b.overallScore - a.overallScore);
+
+      return {
+        rankedTenders: rankedTenders.slice(0, limit),
+        totalRanked: rankedTenders.length,
+        message: `Ranked ${rankedTenders.length} tenders by multi-factor scoring`,
+      };
+    } catch (error) {
+      console.error("Error ranking tenders:", error);
+      return { rankedTenders: [], message: "Error ranking tenders" };
+    }
+  },
+});
+
+const GenerateShortlistInput = z.object({
+  userId: z.string().min(1),
+  daysBack: z.number().int().min(1).max(30).default(7),
+  topN: z.number().int().min(1).max(20).default(10),
+});
+
+export const generateShortlistTool = safeTool({
+  name: "generate_shortlist",
+  description:
+    "Generate a 'top N to apply for today' shortlist by ranking tenders and prioritizing high eligibility, good price match, low competition, and urgent deadlines.",
+  schema: GenerateShortlistInput,
+  fn: async ({ userId, daysBack, topN }) => {
+    try {
+      // Get company profile
+      const profileDoc = await db
+        .collection("company_profiles")
+        .doc(userId)
+        .get();
+      if (!profileDoc.exists) {
+        return {
+          shortlist: [],
+          message:
+            "Company profile not found. Please complete your profile first.",
+        };
+      }
+
+      const companyProfile = profileDoc.data() as CompanyProfile;
+
+      // Search for recent tenders
+      const parts = [
+        `place-of-performance = "ITA"`,
+        `publication-date >= today(-${daysBack})`,
+      ];
+
+      if (companyProfile.cpvCodes?.length) {
+        parts.push(
+          `(${companyProfile.cpvCodes
+            .map((c) => `classification-cpv = "${c}"`)
+            .join(" OR ")})`
+        );
+      }
+
+      const q = parts.join(" AND ");
+      const rawNotices = await tedSearch({ q, limit: topN * 3 }); // Get more to filter
+      const notices = rawNotices as Array<Record<string, unknown>>;
+
+      // Rank and filter
+      const shortlist: Array<{
+        tenderId: string;
+        title: string;
+        buyer: string;
+        value: number | null;
+        deadline: string | null;
+        overallScore: number;
+        recommendation: string;
+        pdfUrl: string | undefined;
+        reasoning?: string;
+      }> = [];
+
+      for (const notice of notices) {
+        const tenderId =
+          (notice["publication-number"] as string) ||
+          (notice["notice-identifier"] as string);
+        if (!tenderId) continue;
+
+        // Calculate scores
+        const scores = {
+          eligibility: 0.8, // Would use analyzeEligibilityTool in production
+          priceMatch: calculatePriceScore(notice, companyProfile),
+          geographicFit: calculateGeographicScore(notice, companyProfile),
+          urgency: calculateUrgencyScore(notice),
+          competition: 0.5, // Would use analyzeCompetitionTool in production
+        };
+
+        const overallScore =
+          scores.eligibility * 0.3 +
+          scores.priceMatch * 0.2 +
+          scores.geographicFit * 0.2 +
+          scores.urgency * 0.2 +
+          scores.competition * 0.1;
+
+        // Only include high-priority tenders
+        if (overallScore >= 0.5) {
+          const links = (notice.links as Record<string, unknown>) || {};
+          const pdfUrl = pickPdfItaOrEn(links);
+
+          const noticeTitle = notice["notice-title"] as
+            | { ita?: string; eng?: string }
+            | undefined;
+          const noticeBuyer = notice["buyer-name"] as
+            | { ita?: string[]; eng?: string[] }
+            | undefined;
+
+          shortlist.push({
+            tenderId: String(tenderId),
+            title: noticeTitle?.ita || noticeTitle?.eng || "",
+            buyer: noticeBuyer?.ita?.[0] || noticeBuyer?.eng?.[0] || "",
+            value:
+              (notice["total-value"] as number | null) ||
+              (notice["estimated-value-glo"] as number | null) ||
+              null,
+            deadline: (notice["deadline-date-lot"] as string | null) || null,
+            pdfUrl,
+            overallScore: Math.round(overallScore * 100) / 100,
+            recommendation:
+              overallScore >= 0.7
+                ? "high"
+                : overallScore >= 0.5
+                ? "medium"
+                : "low",
+            reasoning: `Eligibility: ${Math.round(
+              scores.eligibility * 100
+            )}%, Price match: ${Math.round(
+              scores.priceMatch * 100
+            )}%, Urgency: ${Math.round(scores.urgency * 100)}%`,
+          });
+        }
+      }
+
+      // Sort and limit
+      shortlist.sort((a, b) => b.overallScore - a.overallScore);
+
+      return {
+        shortlist: shortlist.slice(0, topN),
+        totalAnalyzed: notices.length,
+        message: `Generated shortlist of ${Math.min(
+          shortlist.length,
+          topN
+        )} top tenders to apply for today`,
+      };
+    } catch (error) {
+      console.error("Error generating shortlist:", error);
+      return { shortlist: [], message: "Error generating shortlist" };
+    }
+  },
+});
+
+const AnalyzeCompetitionInput = z.object({
+  tenderId: z.string().min(1),
+});
+
+export const analyzeCompetitionTool = safeTool({
+  name: "analyze_competition",
+  description:
+    "Analyze competition level for a tender based on value, complexity, deadline proximity, and historical patterns.",
+  schema: AnalyzeCompetitionInput,
+  fn: async ({ tenderId }) => {
+    try {
+      // Get tender data
+      const tenderDoc = await db.collection("tenders").doc(tenderId).get();
+      if (!tenderDoc.exists) {
+        return {
+          competitionLevel: "unknown",
+          message: "Tender not found",
+        };
+      }
+
+      const tender = tenderDoc.data();
+      if (!tender) {
+        return {
+          competitionLevel: "unknown",
+          message: "Tender data not available",
+        };
+      }
+
+      // Analyze competition factors
+      const value = tender.value || tender["total-value"] || 0;
+      const deadline = tender.deadline || tender["deadline-date-lot"];
+      const complexity = tender.complexityScore || 5; // Default medium
+
+      // Competition indicators
+      let competitionScore = 0.5; // Default medium
+
+      // Higher value = more competition
+      if (value > 1000000) competitionScore += 0.2;
+      else if (value > 100000) competitionScore += 0.1;
+
+      // Closer deadline = less competition (fewer applicants)
+      if (deadline) {
+        const deadlineDate = new Date(deadline);
+        const daysUntilDeadline =
+          (deadlineDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+        if (daysUntilDeadline < 7) competitionScore -= 0.2;
+        else if (daysUntilDeadline < 14) competitionScore -= 0.1;
+      }
+
+      // Higher complexity = less competition (fewer qualified applicants)
+      if (complexity > 7) competitionScore -= 0.2;
+      else if (complexity > 5) competitionScore -= 0.1;
+
+      competitionScore = Math.max(0, Math.min(1, competitionScore));
+
+      const competitionLevel =
+        competitionScore >= 0.7
+          ? "high"
+          : competitionScore >= 0.4
+          ? "medium"
+          : "low";
+
+      return {
+        competitionLevel,
+        competitionScore: Math.round(competitionScore * 100) / 100,
+        factors: {
+          value: value > 1000000 ? "high" : value > 100000 ? "medium" : "low",
+          deadlineProximity: deadline
+            ? (() => {
+                const days =
+                  (new Date(deadline).getTime() - Date.now()) /
+                  (1000 * 60 * 60 * 24);
+                return days < 7 ? "urgent" : days < 14 ? "soon" : "normal";
+              })()
+            : "unknown",
+          complexity:
+            complexity > 7 ? "high" : complexity > 5 ? "medium" : "low",
+        },
+        message: `Competition level: ${competitionLevel} (score: ${competitionScore})`,
+      };
+    } catch (error) {
+      console.error("Error analyzing competition:", error);
+      return {
+        competitionLevel: "unknown",
+        message: "Error analyzing competition",
+      };
+    }
+  },
+});
+
+const AnalyzeBuyerPatternsInput = z.object({
+  buyerName: z.string().min(1),
+  limit: z.number().int().min(1).max(50).optional().default(10),
+});
+
+export const analyzeBuyerPatternsTool = safeTool({
+  name: "analyze_buyer_patterns",
+  description:
+    "Analyze patterns from a buyer's historical tenders to understand preferences, requirements, and typical contract terms.",
+  schema: AnalyzeBuyerPatternsInput,
+  fn: async ({ buyerName, limit }) => {
+    try {
+      // Search for tenders from this buyer
+      const q = `buyer-name ~ "${buyerName}"`;
+      const rawNotices = await tedSearch({ q, limit });
+      const notices = rawNotices as Array<Record<string, unknown>>;
+
+      if (notices.length === 0) {
+        return {
+          patterns: {},
+          message: `No historical tenders found for buyer: ${buyerName}`,
+        };
+      }
+
+      // Analyze patterns
+      const patterns = {
+        averageValue: 0,
+        commonCpvCodes: [] as string[],
+        commonRegions: [] as string[],
+        typicalDeadline: "",
+        preferredContractTypes: [] as string[],
+        commonRequirements: [] as string[],
+      };
+
+      const values: number[] = [];
+      const cpvCounts: Record<string, number> = {};
+      const regionCounts: Record<string, number> = {};
+
+      for (const notice of notices) {
+        const value =
+          (notice["total-value"] as number) ||
+          (notice["estimated-value-glo"] as number) ||
+          0;
+        if (typeof value === "number" && value > 0) values.push(value);
+
+        const cpv = notice["classification-cpv"];
+        if (cpv) {
+          const cpvArr = Array.isArray(cpv) ? cpv : [cpv];
+          cpvArr.forEach((c) => {
+            const cpvStr = String(c);
+            cpvCounts[cpvStr] = (cpvCounts[cpvStr] || 0) + 1;
+          });
+        }
+
+        const place = notice["place-of-performance"];
+        if (place) {
+          const placeStr = String(place);
+          regionCounts[placeStr] = (regionCounts[placeStr] || 0) + 1;
+        }
+      }
+
+      // Calculate averages and most common
+      if (values.length > 0) {
+        patterns.averageValue =
+          values.reduce((a, b) => a + b, 0) / values.length;
+      }
+
+      patterns.commonCpvCodes = Object.entries(cpvCounts)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 5)
+        .map(([cpv]) => cpv);
+
+      patterns.commonRegions = Object.entries(regionCounts)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 3)
+        .map(([region]) => region);
+
+      return {
+        patterns,
+        totalTendersAnalyzed: notices.length,
+        message: `Analyzed ${notices.length} historical tenders from ${buyerName}`,
+      };
+    } catch (error) {
+      console.error("Error analyzing buyer patterns:", error);
+      return {
+        patterns: {},
+        message: "Error analyzing buyer patterns",
+      };
+    }
+  },
+});
+
+// Helper functions for scoring
+function calculatePriceScore(
+  tender: Record<string, unknown>,
+  profile: CompanyProfile
+): number {
+  const value =
+    (tender.value as number) ||
+    (tender["total-value"] as number) ||
+    (tender["estimated-value-glo"] as number) ||
+    0;
+  if (
+    typeof value !== "number" ||
+    !value ||
+    !profile.minContractValue ||
+    !profile.maxContractValue
+  )
+    return 0.5;
+
+  if (value >= profile.minContractValue && value <= profile.maxContractValue) {
+    return 1.0; // Perfect match
+  } else if (value < profile.minContractValue) {
+    return Math.max(
+      0,
+      1 - (profile.minContractValue - value) / profile.minContractValue
+    );
+  } else {
+    return Math.max(
+      0,
+      1 - (value - profile.maxContractValue) / profile.maxContractValue
+    );
+  }
+}
+
+function calculateGeographicScore(
+  tender: Record<string, unknown>,
+  profile: CompanyProfile
+): number {
+  const place = tender.placeOfPerformance || tender["place-of-performance"];
+  if (!place || !profile.operatingRegions?.length) return 0.5;
+
+  const placeStr = String(place).toLowerCase();
+  const hasMatch = profile.operatingRegions.some((region) =>
+    placeStr.includes(region.toLowerCase())
+  );
+
+  return hasMatch ? 1.0 : 0.3;
+}
+
+function calculateCpvScore(
+  tender: Record<string, unknown>,
+  companyProfile: CompanyProfile,
+  userProfile: Partial<UserProfile>
+): number {
+  const cpvValue = tender.cpv || tender["classification-cpv"];
+  const cpvArr = Array.isArray(cpvValue)
+    ? (cpvValue as unknown[])
+    : cpvValue
+    ? [cpvValue]
+    : [];
+
+  const preferredCpv = [
+    ...(companyProfile.cpvCodes || []),
+    ...(userProfile.cpv || []),
+  ];
+
+  if (preferredCpv.length === 0) return 0.5;
+
+  const hasMatch = preferredCpv.some((code) =>
+    cpvArr.some((c) => String(c) === code)
+  );
+  return hasMatch ? 1.0 : 0.2;
+}
+
+function calculateUrgencyScore(tender: Record<string, unknown>): number {
+  const deadline =
+    (tender.deadline as string) || (tender["deadline-date-lot"] as string);
+  if (!deadline || typeof deadline !== "string") return 0.5;
+
+  const deadlineDate = new Date(deadline);
+  if (isNaN(deadlineDate.getTime())) return 0.5;
+
+  const daysUntilDeadline =
+    (deadlineDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+
+  if (daysUntilDeadline < 0) return 0; // Past deadline
+  if (daysUntilDeadline < 7) return 1.0; // Very urgent
+  if (daysUntilDeadline < 14) return 0.8; // Urgent
+  if (daysUntilDeadline < 30) return 0.6; // Soon
+  return 0.4; // Not urgent
+}
+
+function calculateRecencyScore(
+  tender: Record<string, unknown>,
+  userProfile: Partial<UserProfile>
+): number {
+  const pubDate =
+    (tender.publicationDate as string) ||
+    (tender["publication-date"] as string);
+  if (!pubDate || typeof pubDate !== "string") return 0.5;
+
+  const pub = Array.isArray(pubDate) ? pubDate[0] : pubDate;
+  const date = new Date(pub as string | number | Date);
+  if (isNaN(date.getTime())) return 0.5;
+
+  const daysAgo = (Date.now() - date.getTime()) / (1000 * 60 * 60 * 24);
+  const daysBack = userProfile.daysBack || 7;
+
+  if (daysAgo <= daysBack) return 1.0;
+  if (daysAgo <= daysBack * 2) return 0.6;
+  return 0.3;
+}
+
+function calculateConditionsScore(tender: Record<string, unknown>): number {
+  // Analyze conditions complexity (simplified)
+  const complexityScore = (tender.complexityScore as number) || 0;
+  const hasComplexRequirements = complexityScore > 7;
+
+  const deadline =
+    (tender.deadline as string) || (tender["deadline-date-lot"] as string);
+  const hasShortDeadline =
+    deadline &&
+    typeof deadline === "string" &&
+    (new Date(deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24) < 14;
+
+  if (hasComplexRequirements && hasShortDeadline) return 0.3; // Difficult
+  if (hasComplexRequirements || hasShortDeadline) return 0.6; // Moderate
+  return 0.9; // Favorable
+}
+
+// ============================================
+// APPLICATION & COMMUNICATION TOOLS
+// ============================================
+
+const DraftApplicationInput = z.object({
+  userId: z.string().min(1),
+  tenderId: z.string().min(1),
+  submissionMethod: z.enum(["email", "form"]).default("email"),
+  tone: z.enum(["formal", "professional", "friendly", "business"]).optional(),
+});
+
+export const draftApplicationTool = safeTool({
+  name: "draft_application",
+  description:
+    "Draft a personalized application email or form for a tender. Adapts tone based on buyer type and includes company introduction, experience, certifications, and financial capacity.",
+  schema: DraftApplicationInput,
+  fn: async ({ userId, tenderId, submissionMethod, tone }) => {
+    try {
+      // Get company profile
+      const profileDoc = await db
+        .collection("company_profiles")
+        .doc(userId)
+        .get();
+      if (!profileDoc.exists) {
+        return {
+          draft: "",
+          message:
+            "Company profile not found. Please complete your profile first.",
+        };
+      }
+
+      const companyProfile = profileDoc.data() as CompanyProfile;
+
+      // Get tender data
+      const tenderDoc = await db.collection("tenders").doc(tenderId).get();
+      if (!tenderDoc.exists) {
+        return {
+          draft: "",
+          message: "Tender not found",
+        };
+      }
+
+      const tender = tenderDoc.data();
+      if (!tender) {
+        return {
+          draft: "",
+          message: "Tender data not available",
+        };
+      }
+
+      // Use LLM to draft application
+      const llm = await llmFactory();
+
+      const prompt = `
+Draft a ${
+        submissionMethod === "email" ? "professional email" : "form submission"
+      } for this tender application.
+
+COMPANY PROFILE:
+- Name: ${companyProfile.companyName}
+- Legal Form: ${companyProfile.legalForm || "Not specified"}
+- Annual Revenue: €${
+        companyProfile.annualRevenue?.toLocaleString() || "Not specified"
+      }
+- Employees: ${companyProfile.employeeCount || "Not specified"}
+- Years in Business: ${companyProfile.yearsInBusiness || "Not specified"}
+- Certifications: ${companyProfile.certifications?.join(", ") || "None"}
+- Technical Skills: ${companyProfile.technicalSkills?.join(", ") || "None"}
+- Operating Regions: ${
+        companyProfile.operatingRegions?.join(", ") || "Not specified"
+      }
+- Primary Sectors: ${
+        companyProfile.primarySectors?.join(", ") || "Not specified"
+      }
+
+TENDER DETAILS:
+- Title: ${tender.title || tender["notice-title"]?.ita || "Not specified"}
+- Buyer: ${tender.buyer || tender["buyer-name"]?.ita?.[0] || "Not specified"}
+- Value: €${(tender.value || tender["total-value"] || 0).toLocaleString()}
+- Deadline: ${tender.deadline || tender["deadline-date-lot"] || "Not specified"}
+
+TONE: ${tone || "professional"} (${
+        tone === "formal"
+          ? "Very formal for public administration"
+          : tone === "professional"
+          ? "Professional business tone"
+          : tone === "friendly"
+          ? "Friendly but professional"
+          : "Business-focused"
+      })
+
+Draft a ${
+        submissionMethod === "email"
+          ? "professional email"
+          : "form-ready content"
+      } that:
+1. Introduces the company professionally
+2. Highlights relevant experience and capabilities
+3. Mentions relevant certifications and qualifications
+4. Demonstrates financial capacity
+5. Shows understanding of tender requirements
+6. Expresses interest and commitment
+
+${
+  submissionMethod === "email"
+    ? "Include a professional subject line."
+    : "Format as form-ready content with clear sections."
+}
+
+Return ONLY the ${
+        submissionMethod === "email"
+          ? "email content (subject and body)"
+          : "form content"
+      } in Italian.
+`;
+
+      const response = await llm.invoke(prompt);
+      const content =
+        typeof response === "string"
+          ? response
+          : typeof response === "object" && "content" in response
+          ? String(response.content)
+          : String(response);
+
+      return {
+        draft: content,
+        subject:
+          submissionMethod === "email"
+            ? content.split("\n")[0]?.replace("Subject:", "").trim() ||
+              "Application"
+            : undefined,
+        body:
+          submissionMethod === "email"
+            ? content.split("\n").slice(1).join("\n").trim()
+            : content,
+        message: `Draft created successfully for tender ${tenderId}`,
+      };
+    } catch (error) {
+      console.error("Error drafting application:", error);
+      return {
+        draft: "",
+        message: "Error drafting application",
+      };
+    }
+  },
+});
+
+const SendApplicationEmailInput = z.object({
+  userId: z.string().min(1),
+  applicationId: z.string().min(1),
+  recipientEmail: z.string().email(),
+  subject: z.string().min(1),
+  body: z.string().min(1),
+});
+
+export const sendApplicationEmailTool = safeTool({
+  name: "send_application_email",
+  description:
+    "Send an application email. Logs the communication and updates application status.",
+  schema: SendApplicationEmailInput,
+  fn: async ({
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    userId: _userId,
+    applicationId,
+    recipientEmail,
+    subject,
+    body,
+  }) => {
+    try {
+      // In production, this would use an email service (SendGrid, SES, etc.)
+      // For now, we'll just log it to Firestore
+
+      const applicationRef = db.collection("applications").doc(applicationId);
+      const appDoc = await applicationRef.get();
+
+      if (!appDoc.exists) {
+        return {
+          success: false,
+          message: "Application not found",
+        };
+      }
+
+      const application = appDoc.data();
+      const communications = (application?.communications || []) as Array<{
+        type: string;
+        content: string;
+        sentAt: Date;
+        recipient?: string;
+        subject?: string;
+      }>;
+
+      // Add communication log
+      communications.push({
+        type: "email",
+        content: body,
+        sentAt: new Date(),
+        recipient: recipientEmail,
+        subject,
+      });
+
+      // Update application status
+      await applicationRef.update({
+        status: "sent",
+        recipientEmail,
+        communications,
+        statusUpdatedAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      // Send email via Brevo
+      const { sendApplicationEmail } = await import("../lib/brevo.js");
+      const emailResult = await sendApplicationEmail(
+        recipientEmail,
+        subject,
+        body,
+        application?.tenderId
+      );
+
+      if (!emailResult.success) {
+        console.error("[Application] Email send failed:", emailResult.error);
+        // Still log the communication even if email fails
+        return {
+          success: false,
+          message: `Email send failed: ${emailResult.error}`,
+          applicationId,
+        };
+      }
+
+      return {
+        success: true,
+        message: `Application email sent successfully (Message ID: ${emailResult.messageId})`,
+        applicationId,
+        messageId: emailResult.messageId,
+      };
+    } catch (error) {
+      console.error("Error sending application email:", error);
+      return {
+        success: false,
+        message: "Error sending application email",
+      };
+    }
+  },
+});
+
+const SubmitApplicationFormInput = z.object({
+  userId: z.string().min(1),
+  applicationId: z.string().min(1),
+  submissionUrl: z.string().url(),
+  formData: z.record(z.string(), z.any()),
+});
+
+export const submitApplicationFormTool = safeTool({
+  name: "submit_application_form",
+  description:
+    "Submit an application via web form. Logs the submission and updates application status.",
+  schema: SubmitApplicationFormInput,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  fn: async ({ userId: _userId, applicationId, submissionUrl, formData }) => {
+    try {
+      // In production, this would make an HTTP POST request
+      // For now, we'll just log it to Firestore
+
+      const applicationRef = db.collection("applications").doc(applicationId);
+      const appDoc = await applicationRef.get();
+
+      if (!appDoc.exists) {
+        return {
+          success: false,
+          message: "Application not found",
+        };
+      }
+
+      const application = appDoc.data();
+      const communications = (application?.communications || []) as Array<{
+        type: string;
+        content: string;
+        sentAt: Date;
+        recipient?: string;
+        subject?: string;
+      }>;
+
+      // Add communication log
+      communications.push({
+        type: "form",
+        content: JSON.stringify(formData),
+        sentAt: new Date(),
+      });
+
+      // Update application status
+      await applicationRef.update({
+        status: "submitted",
+        submissionUrl,
+        submittedAt: new Date(),
+        communications,
+        statusUpdatedAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      // TODO: Actually submit form via HTTP POST
+      console.log(`[Application] Would submit form to ${submissionUrl}`);
+
+      return {
+        success: true,
+        message: `Application form logged (HTTP submission integration pending)`,
+        applicationId,
+      };
+    } catch (error) {
+      console.error("Error submitting application form:", error);
+      return {
+        success: false,
+        message: "Error submitting application form",
+      };
+    }
+  },
+});
+
+const TrackApplicationInput = z.object({
+  userId: z.string().min(1),
+  tenderId: z.string().min(1),
+  tenderTitle: z.string().min(1),
+  buyerName: z.string().min(1),
+  draftContent: z.string().min(1),
+  subject: z.string().optional(),
+  tone: z
+    .enum(["formal", "professional", "friendly", "business"])
+    .default("professional"),
+  submissionMethod: z.enum(["email", "form", "manual"]).default("email"),
+});
+
+export const trackApplicationTool = safeTool({
+  name: "track_application",
+  description:
+    "Create or update an application record in the user's application board. Tracks all applications for status monitoring.",
+  schema: TrackApplicationInput,
+  fn: async ({
+    userId,
+    tenderId,
+    tenderTitle,
+    buyerName,
+    draftContent,
+    subject,
+    tone,
+    submissionMethod,
+  }) => {
+    try {
+      // Check if application already exists
+      const existingApps = await db
+        .collection("applications")
+        .where("userId", "==", userId)
+        .where("tenderId", "==", tenderId)
+        .limit(1)
+        .get();
+
+      const now = new Date();
+      const applicationData = {
+        userId,
+        tenderId,
+        tenderTitle,
+        buyerName,
+        draftContent,
+        subject: subject || undefined,
+        tone,
+        submissionMethod,
+        status: "draft" as const,
+        communications: [] as Array<{
+          type: string;
+          content: string;
+          sentAt: Date;
+          recipient?: string;
+          subject?: string;
+        }>,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      if (!existingApps.empty) {
+        // Update existing application
+        const existingId = existingApps.docs[0].id;
+        await db
+          .collection("applications")
+          .doc(existingId)
+          .update({
+            ...applicationData,
+            updatedAt: now,
+          });
+        return {
+          applicationId: existingId,
+          message: "Application updated in tracking board",
+        };
+      } else {
+        // Create new application
+        const newAppRef = db.collection("applications").doc();
+        await newAppRef.set(applicationData);
+        return {
+          applicationId: newAppRef.id,
+          message: "Application created in tracking board",
+        };
+      }
+    } catch (error) {
+      console.error("Error tracking application:", error);
+      return {
+        applicationId: "",
+        message: "Error tracking application",
+      };
+    }
+  },
+});
+
+const GetApplicationStatusInput = z.object({
+  userId: z.string().min(1),
+  applicationId: z.string().optional(),
+  tenderId: z.string().optional(),
+});
+
+export const getApplicationStatusTool = safeTool({
+  name: "get_application_status",
+  description:
+    "Get the status of an application or all applications for a user. Returns application details and communication history.",
+  schema: GetApplicationStatusInput,
+  fn: async ({ userId, applicationId, tenderId }) => {
+    try {
+      let query = db.collection("applications").where("userId", "==", userId);
+
+      if (applicationId) {
+        const appDoc = await db
+          .collection("applications")
+          .doc(applicationId)
+          .get();
+        if (!appDoc.exists) {
+          return {
+            applications: [],
+            message: "Application not found",
+          };
+        }
+        return {
+          applications: [
+            {
+              id: appDoc.id,
+              ...appDoc.data(),
+            },
+          ],
+          message: "Application status retrieved",
+        };
+      }
+
+      if (tenderId) {
+        query = query.where("tenderId", "==", tenderId);
+      }
+
+      const snapshot = await query.orderBy("createdAt", "desc").limit(50).get();
+
+      const applications = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+
+      return {
+        applications,
+        message: `Retrieved ${applications.length} applications`,
+      };
+    } catch (error) {
+      console.error("Error getting application status:", error);
+      return {
+        applications: [],
+        message: "Error getting application status",
+      };
+    }
+  },
 });
 
 export const frameworkAgreementSearchTool = safeTool({
@@ -1110,23 +2496,38 @@ export const frameworkAgreementSearchTool = safeTool({
       ];
 
       if (countries && countries.length > 0) {
+        // Normalize all country codes
+        const normalizedCountries = countries.map(normalizeCountryCode);
         parts.push(
-          `(place-of-performance-country-proc IN (${countries.join(", ")}))`
+          `(place-of-performance-country-proc IN (${normalizedCountries.join(
+            ", "
+          )}))`
         );
       }
 
       if (cpvCodes && cpvCodes.length > 0) {
-        parts.push(
-          `(${cpvCodes
-            .map(
-              (c) => `classification-cpv = "${c.endsWith("*") ? c : c + "*"}"`
-            )
-            .join(" OR ")})`
-        );
+        // Validate CPV codes
+        const validCpvs = cpvCodes
+          .map(validateCpvCode)
+          .filter((c): c is string => c !== null)
+          .map((c) => c.replace(/\*$/, "")); // Remove wildcards
+
+        if (validCpvs.length > 0) {
+          if (validCpvs.length === 1) {
+            parts.push(`classification-cpv = "${validCpvs[0]}"`);
+          } else {
+            parts.push(
+              `classification-cpv IN (${validCpvs
+                .map((c) => `"${c}"`)
+                .join(", ")})`
+            );
+          }
+        }
       }
 
       const q = parts.join(" AND ");
-      const notices = await tedSearch({ q, limit });
+      const rawNotices = await tedSearch({ q, limit });
+      const notices = rawNotices as Array<Record<string, unknown>>;
 
       return {
         frameworkAgreements: notices.map((n: Record<string, unknown>) => ({

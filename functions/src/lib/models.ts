@@ -121,3 +121,46 @@ export type FavoriteTender = {
   tenderId: string; // publication-number
   createdAt: Date;
 };
+
+export type Application = {
+  id: string; // Firestore doc ID
+  userId: string;
+  tenderId: string;
+  tenderTitle: string;
+  buyerName: string;
+
+  // Application content
+  draftContent: string; // Email body or form content
+  subject?: string; // Email subject
+  tone: "formal" | "professional" | "friendly" | "business";
+
+  // Submission details
+  submissionMethod: "email" | "form" | "manual";
+  recipientEmail?: string;
+  submissionUrl?: string;
+  submittedAt?: Date;
+
+  // Status tracking
+  status:
+    | "draft"
+    | "sent"
+    | "submitted"
+    | "accepted"
+    | "rejected"
+    | "withdrawn";
+  statusUpdatedAt?: Date;
+
+  // Communication history
+  communications: Array<{
+    type: "email" | "form" | "note";
+    content: string;
+    sentAt: Date;
+    recipient?: string;
+    subject?: string;
+  }>;
+
+  // Metadata
+  createdAt: Date;
+  updatedAt: Date;
+  notes?: string;
+};

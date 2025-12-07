@@ -1,5 +1,5 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { db, serverTimestamp } from "./lib/firestore";
+import { db, serverTimestamp } from "../../lib/firestore";
 
 type Prefs = {
   regions?: string[];
@@ -8,29 +8,39 @@ type Prefs = {
   minValue?: number | null;
   sectors?: string[];
   notifyDaily?: boolean;
+  notifyInstant?: boolean;
 };
 
-function getUidFromHeaders(req: any): string {
+function getUidFromHeaders(req: {
+  headers: Record<string, string | string[] | undefined>;
+}): string {
+  const getHeader = (key: string): string | undefined => {
+    const value = req.headers[key];
+    return Array.isArray(value) ? value[0] : value;
+  };
   const uid =
-    (req.headers["x-user-id"] as string) ||
-    (req.headers["X-User-Id"] as string) ||
-    (req.headers["x-userid"] as string) ||
+    getHeader("x-user-id") ||
+    getHeader("X-User-Id") ||
+    getHeader("x-userid") ||
     "anon";
   return uid;
 }
 
-function parseJsonBody(body: any): any {
+function parseJsonBody(body: unknown): Record<string, unknown> {
   if (!body) {
-    return {};
+    return {} as Record<string, unknown>;
   }
   if (typeof body === "string") {
     try {
-      return JSON.parse(body);
+      return (JSON.parse(body) as Record<string, unknown>) || {};
     } catch {
-      return {};
+      return {} as Record<string, unknown>;
     }
   }
-  return body;
+  if (typeof body === "object" && body !== null) {
+    return body as Record<string, unknown>;
+  }
+  return {} as Record<string, unknown>;
 }
 
 export const preferences = onRequest(
@@ -56,6 +66,7 @@ export const preferences = onRequest(
             minValue: typeof data.minValue === "number" ? data.minValue : null,
             sectors: Array.isArray(data.sectors) ? data.sectors : [],
             notifyDaily: !!data.notifyDaily,
+            notifyInstant: !!data.notifyInstant,
           } as Prefs,
         };
         res.json(out);
@@ -78,6 +89,7 @@ export const preferences = onRequest(
             ? incoming.sectors.slice(0, 20)
             : [],
           notifyDaily: !!incoming.notifyDaily,
+          notifyInstant: !!incoming.notifyInstant,
         };
 
         await ref.set(
@@ -94,9 +106,13 @@ export const preferences = onRequest(
       }
 
       res.status(405).json({ error: "Metodo non supportato" });
-    } catch (e: any) {
-      console.error("preferences ERROR:", e?.stack || e?.message || String(e));
-      res.status(500).json({ error: e?.message ?? "Errore preferenze" });
+    } catch (e: unknown) {
+      const error = e instanceof Error ? e : new Error(String(e));
+      console.error(
+        "preferences ERROR:",
+        error.stack || error.message || String(e)
+      );
+      res.status(500).json({ error: error.message ?? "Errore preferenze" });
     }
   }
 );

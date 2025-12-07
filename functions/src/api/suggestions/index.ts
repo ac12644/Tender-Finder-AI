@@ -3,18 +3,19 @@ import {
   generateSmartSuggestionsTool,
   analyzeUserBehaviorTool,
   generateContextualSuggestionsTool,
-} from "./graph/tools";
-import { profilesCol } from "./lib/firestore.extras";
-
-function setCors(res: { set: (key: string, value: string) => void }) {
-  res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-}
+} from "../../graph/tools";
+import { profilesCol } from "../../lib/firestore.extras";
+import { setCors } from "../../utils/cors";
+import { OPENROUTER_API_KEY } from "../../lib/llm";
 
 // Generate smart suggestions based on user profile and context
 export const suggestions = onRequest(
-  { region: "europe-west1", cors: true, timeoutSeconds: 60 },
+  {
+    region: "europe-west1",
+    cors: true,
+    timeoutSeconds: 60,
+    secrets: [OPENROUTER_API_KEY],
+  },
   async (req, res): Promise<void> => {
     setCors(res);
     if (req.method === "OPTIONS") {
@@ -135,10 +136,13 @@ export const trendingSuggestions = onRequest(
         type: "trending",
         generated_at: new Date().toISOString(),
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Error generating trending suggestions:", e);
       res.status(500).json({
-        error: e?.message ?? "Failed to generate trending suggestions",
+        error:
+          e instanceof Error
+            ? e.message
+            : "Failed to generate trending suggestions",
         suggestions: [
           "trova bandi software pubblicati oggi",
           "mostra bandi costruzioni con scadenza entro 7 giorni",
@@ -211,10 +215,13 @@ export const personalizedSuggestions = onRequest(
         userProfile,
         generated_at: new Date().toISOString(),
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("Error generating personalized suggestions:", e);
       res.status(500).json({
-        error: e?.message ?? "Failed to generate personalized suggestions",
+        error:
+          e instanceof Error
+            ? e.message
+            : "Failed to generate personalized suggestions",
         suggestions: [],
       });
     }

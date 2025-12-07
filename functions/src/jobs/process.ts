@@ -1,19 +1,45 @@
+/**
+ * Background Job: Tender Processing
+ *
+ * Processes unprocessed tender notices by generating AI-powered summaries
+ * in both Italian and English. Processes tenders in batches with configurable
+ * concurrency to optimize API usage and performance.
+ */
+
 import { onRequest } from "firebase-functions/v2/https";
 import { tendersCol, serverTimestamp, db } from "../lib/firestore";
 import { llmFactory } from "../lib/llm";
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 
+/** Number of tenders to process concurrently */
+const CONCURRENCY = 5;
+
+/** Maximum number of tenders to process per invocation */
+const BATCH_SIZE = 10;
+
+/**
+ * HTTP endpoint for processing unprocessed tender notices.
+ *
+ * Fetches up to 10 unprocessed tenders, generates summaries using an LLM,
+ * and updates the Firestore records. Processes tenders in concurrent batches
+ * to optimize performance.
+ */
 export const tendersProcess = onRequest(
-  { region: "europe-west1", cors: true, timeoutSeconds: 180, memory: "512MiB" },
+  {
+    region: "europe-west1",
+    cors: true,
+    timeoutSeconds: 180,
+    memory: "512MiB",
+  },
   async (_req, res): Promise<void> => {
-    const snap = await tendersCol()
+    const snapshot = await tendersCol()
       .where("processed", "==", false)
       .orderBy("createdAt", "asc")
-      .limit(10)
+      .limit(BATCH_SIZE)
       .get();
 
-    if (snap.empty) {
+    if (snapshot.empty) {
       res.json({ processed: 0 });
       return;
     }
@@ -21,49 +47,64 @@ export const tendersProcess = onRequest(
     const llm = await llmFactory();
     const chain = llm.pipe(new StringOutputParser());
 
-    const docs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    const tenders = snapshot.docs.map((doc) => {
+      const data = doc.data() as Record<string, unknown>;
+      return {
+        id: doc.id,
+        title: data.title as string | undefined,
+        buyer: data.buyer as string | undefined,
+        publicationDate: data.publicationDate as string | undefined,
+        deadline: data.deadline as string | undefined,
+      };
+    });
 
-    const CONCURRENCY = 5;
-    const chunks: (typeof docs)[] = [];
-    for (let i = 0; i < docs.length; i += CONCURRENCY)
-      chunks.push(docs.slice(i, i + CONCURRENCY));
+    // Split into concurrent batches
+    const batches: (typeof tenders)[] = [];
+    for (let i = 0; i < tenders.length; i += CONCURRENCY) {
+      batches.push(tenders.slice(i, i + CONCURRENCY));
+    }
 
-    let processed = 0;
-    for (const chunk of chunks) {
+    let processedCount = 0;
+
+    for (const batch of batches) {
       const results = await Promise.allSettled(
-        chunk.map(async (t) => {
-          const system =
-            "Riassumi per un imprenditore italiano: titolo, stazione appaltante, scadenza, CPV se noto, valore se presente. " +
-            "Includi una riga in inglese brevissima prefissata con 'EN: '. Risposta breve, senza formattazioni speciali.";
-          const content = `Titolo: ${t.title}
-Buyer: ${t.buyer}
-Pubblicazione: ${t.publicationDate ?? "N/D"}
-Scadenza: ${t.deadline ?? "N/D"}`;
+        batch.map(async (tender) => {
+          const systemPrompt =
+            "Riassumi per un imprenditore italiano: titolo, stazione appaltante, " +
+            "scadenza, CPV se noto, valore se presente. Includi una riga in inglese " +
+            "brevissima prefissata con 'EN: '. Risposta breve, senza formattazioni speciali.";
 
-          const text = (
+          const content = `Titolo: ${tender.title}
+Buyer: ${tender.buyer}
+Pubblicazione: ${tender.publicationDate ?? "N/D"}
+Scadenza: ${tender.deadline ?? "N/D"}`;
+
+          const response = (
             await chain.invoke([
-              new SystemMessage(system),
+              new SystemMessage(systemPrompt),
               new HumanMessage(content),
             ])
           ).trim();
 
-          let summary_it = text;
+          // Split Italian and English summaries
+          let summary_it = response;
           let summary_en = "";
-          const idx = text.indexOf("EN:");
-          if (idx >= 0) {
-            summary_it = text.slice(0, idx).trim();
-            summary_en = text.slice(idx + 3).trim();
+          const englishIndex = response.indexOf("EN:");
+          if (englishIndex >= 0) {
+            summary_it = response.slice(0, englishIndex).trim();
+            summary_en = response.slice(englishIndex + 3).trim();
           }
 
-          return { id: t.id, summary_it, summary_en };
+          return { id: tender.id, summary_it, summary_en };
         })
       );
 
-      const batch = db.batch();
-      for (const r of results) {
-        if (r.status === "fulfilled") {
-          const { id, summary_it, summary_en } = r.value;
-          batch.set(
+      // Update Firestore with results
+      const firestoreBatch = db.batch();
+      for (const result of results) {
+        if (result.status === "fulfilled") {
+          const { id, summary_it, summary_en } = result.value;
+          firestoreBatch.set(
             tendersCol().doc(id),
             {
               summary_it,
@@ -73,12 +114,14 @@ Scadenza: ${t.deadline ?? "N/D"}`;
             },
             { merge: true }
           );
-          processed += 1;
+          processedCount += 1;
+        } else {
+          console.error("Failed to process tender:", result.reason);
         }
       }
-      await batch.commit();
+      await firestoreBatch.commit();
     }
 
-    res.json({ processed });
+    res.json({ processed: processedCount });
   }
 );

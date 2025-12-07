@@ -16,7 +16,8 @@ import {
 import { Building2, MapPin, Target, AlertCircle, Check } from "lucide-react";
 import { IT_REGIONS, CPV_SUGGESTIONS } from "@/data";
 
-const BASE_URL = process.env.NEXT_PUBLIC_TENDER_API_BASE ?? "";
+import { API_BASE_URL } from "@/lib/apiConfig";
+const BASE_URL = API_BASE_URL;
 
 interface CompanyProfile {
   uid: string;
@@ -35,6 +36,7 @@ interface CompanyProfile {
   daysBack: number;
   minValue?: number;
   notifyDaily: boolean;
+  notifyInstant?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -103,6 +105,7 @@ export default function CompanyProfilePage() {
     daysBack: 7,
     minValue: undefined,
     notifyDaily: false,
+    notifyInstant: false,
   });
 
   const [newSkill, setNewSkill] = useState("");
@@ -127,6 +130,7 @@ export default function CompanyProfilePage() {
           daysBack: profileData.daysBack || 7,
           minValue: profileData.minValue || undefined,
           notifyDaily: profileData.notifyDaily || false,
+          notifyInstant: profileData.notifyInstant || false,
         });
       } else if (response.status === 404) {
         // Profile doesn't exist yet
@@ -187,6 +191,7 @@ export default function CompanyProfilePage() {
           minValue: formData.minValue || null,
           sectors: formData.primarySectors || [],
           notifyDaily: formData.notifyDaily || false,
+          notifyInstant: formData.notifyInstant || false,
         }),
       });
 
@@ -545,6 +550,67 @@ export default function CompanyProfilePage() {
                 ))}
               </SelectContent>
             </Select>
+          </CardContent>
+        </Card>
+
+        {/* Notification Preferences */}
+        <Card className="border-gray-200">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-gray-900">
+              <AlertCircle className="h-5 w-5 text-blue-500" />
+              Notifiche
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Scegli come vuoi ricevere le notifiche sui nuovi bandi.
+            </p>
+            <div className="space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.notifyDaily || false}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      notifyDaily: e.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-gray-900">
+                    Riepilogo giornaliero
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    Ricevi un&apos;email ogni mattina con i bandi selezionati
+                    per te
+                  </div>
+                </div>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.notifyInstant || false}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      notifyInstant: e.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-gray-900">
+                    Notifiche immediate
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    Ricevi un&apos;email non appena viene pubblicato un bando
+                    che corrisponde ai tuoi criteri
+                  </div>
+                </div>
+              </label>
+            </div>
           </CardContent>
         </Card>
 

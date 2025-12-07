@@ -60,7 +60,7 @@ export function TenderDialog({
     setOpen(true);
     if (t) return;
     setLoading(true);
-    await trackEvent("open_detail", tenderId, { referrer: "per-te" });
+    await trackEvent("open_detail", tenderId, { referrer: "app" });
     try {
       const res = await fetch(
         `${baseUrl}/tenderGet?id=${encodeURIComponent(tenderId)}`,

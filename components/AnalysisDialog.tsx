@@ -35,13 +35,30 @@ interface AnalysisResult {
 interface AnalysisDialogProps {
   tenderId: string;
   tenderTitle: string;
-  onAnalyze: (tenderId: string) => Promise<AnalysisResult | null>;
+  tenderData?: {
+    title?: string;
+    buyer?: string;
+    cpv?: string | string[];
+    deadline?: string;
+    value?: number;
+  };
+  onAnalyze: (
+    tenderId: string,
+    tenderData?: {
+      title?: string;
+      buyer?: string;
+      cpv?: string | string[];
+      deadline?: string;
+      value?: number;
+    }
+  ) => Promise<AnalysisResult | null>;
   children: React.ReactNode;
 }
 
 export function AnalysisDialog({
   tenderId,
   tenderTitle,
+  tenderData,
   onAnalyze,
   children,
 }: AnalysisDialogProps) {
@@ -55,7 +72,7 @@ export function AnalysisDialog({
     setError(null);
 
     try {
-      const result = await onAnalyze(tenderId);
+      const result = await onAnalyze(tenderId, tenderData);
       if (result) {
         setAnalysis(result);
       } else {
@@ -67,7 +84,7 @@ export function AnalysisDialog({
     } finally {
       setLoading(false);
     }
-  }, [onAnalyze, tenderId]);
+  }, [onAnalyze, tenderId, tenderData]);
 
   // Auto-start analysis when dialog opens
   useEffect(() => {

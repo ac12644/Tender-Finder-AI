@@ -1,12 +1,8 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { db } from "./lib/firestore";
-import type { CompanyProfile } from "./lib/models";
-
-function setCors(res: { set: (key: string, value: string) => void }) {
-  res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-}
+import { db } from "../../lib/firestore";
+import type { CompanyProfile } from "../../lib/models";
+import { setCors } from "../../utils/cors";
+import { OPENROUTER_API_KEY } from "../../lib/llm";
 
 // Get company profile
 export const getCompanyProfile = onRequest(
@@ -134,7 +130,7 @@ export const getBestTenders = onRequest(
       const { limit = 10, daysBack = 7, regions, cpvCodes } = req.body ?? {};
 
       // Import the tool function
-      const { getBestTendersTool } = await import("./graph/tools.js");
+      const { getBestTendersTool } = await import("../../graph/tools.js");
 
       const result = await getBestTendersTool.func({
         userId,
@@ -156,7 +152,12 @@ export const getBestTenders = onRequest(
 
 // Analyze eligibility for specific tender
 export const analyzeEligibility = onRequest(
-  { region: "europe-west1", cors: true, timeoutSeconds: 60 },
+  {
+    region: "europe-west1",
+    cors: true,
+    timeoutSeconds: 60,
+    secrets: [OPENROUTER_API_KEY],
+  },
   async (req, res): Promise<void> => {
     setCors(res);
     if (req.method === "OPTIONS") {
@@ -172,7 +173,7 @@ export const analyzeEligibility = onRequest(
         return;
       }
 
-      const { tenderId } = req.body;
+      const { tenderId, tenderData } = req.body;
 
       if (!tenderId) {
         res.status(400).json({ error: "Tender ID is required" });
@@ -192,10 +193,19 @@ export const analyzeEligibility = onRequest(
       const companyProfile = profileDoc.data() as CompanyProfile;
 
       // Import the tool function
-      const { analyzeEligibilityTool } = await import("./graph/tools.js");
+      const { analyzeEligibilityTool } = await import("../../graph/tools.js");
 
       const result = await analyzeEligibilityTool.func({
         tenderId,
+        tenderData: tenderData
+          ? {
+              title: tenderData.title || "",
+              buyer: tenderData.buyer || "",
+              cpv: tenderData.cpv || undefined,
+              deadline: tenderData.deadline || undefined,
+              value: tenderData.value || undefined,
+            }
+          : undefined,
         companyProfile: {
           annualRevenue: companyProfile.annualRevenue,
           employeeCount: companyProfile.employeeCount,
@@ -221,7 +231,12 @@ export const analyzeEligibility = onRequest(
 
 // Get personalized recommendations
 export const getPersonalizedRecommendations = onRequest(
-  { region: "europe-west1", cors: true, timeoutSeconds: 60 },
+  {
+    region: "europe-west1",
+    cors: true,
+    timeoutSeconds: 60,
+    secrets: [OPENROUTER_API_KEY],
+  },
   async (req, res): Promise<void> => {
     setCors(res);
     if (req.method === "OPTIONS") {
@@ -241,7 +256,7 @@ export const getPersonalizedRecommendations = onRequest(
 
       // Import the tool function
       const { getPersonalizedRecommendationsTool } = await import(
-        "./graph/tools.js"
+        "../../graph/tools.js"
       );
 
       const result = await getPersonalizedRecommendationsTool.func({

@@ -1,12 +1,47 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { db } from "./lib/firestore";
-import { tedSearch } from "./lib/ted";
+import { db } from "../../lib/firestore";
+import { tedSearch } from "../../lib/ted";
 
 type Prefs = {
   regions?: string[];
   cpv?: string[];
   daysBack?: number;
   minValue?: number | null;
+};
+
+type TedNotice = Record<string, unknown> & {
+  "publication-number"?: string;
+  "buyer-name"?: {
+    ita?: string[];
+    eng?: string[];
+    en?: string[];
+  };
+  "notice-title"?: {
+    ita?: string;
+    eng?: string;
+    en?: string;
+  };
+  "classification-cpv"?: string | string[];
+  "publication-date"?: string | string[];
+  "deadline-date-lot"?: string | string[];
+  "total-value"?: number;
+  "estimated-value-glo"?: number;
+  links?: {
+    pdf?: {
+      it?: string;
+      ITA?: string;
+      en?: string;
+      ENG?: string;
+    };
+  };
+};
+
+type EventData = {
+  tenderId?: string;
+  type?: string;
+  metadata?: {
+    value?: boolean;
+  };
 };
 
 function qpFromPrefs(p: Prefs) {
@@ -64,38 +99,34 @@ export const feed = onRequest(
         { ted: number; pdf: number; detail: number; fav: number }
       >();
       evSnap.forEach((d) => {
-        const e = d.data() || {};
-        const id = String((e as any).tenderId || "");
+        const e = (d.data() || {}) as EventData;
+        const id = String(e.tenderId || "");
         if (!id) return;
         const cur = clicks.get(id) ?? { ted: 0, pdf: 0, detail: 0, fav: 0 };
-        if ((e as any).type === "open_ted") cur.ted++;
-        if ((e as any).type === "open_pdf") cur.pdf++;
-        if ((e as any).type === "open_detail") cur.detail++;
-        if (
-          (e as any).type === "favorite_toggle" &&
-          (e as any).metadata?.value === true
-        )
+        if (e.type === "open_ted") cur.ted++;
+        if (e.type === "open_pdf") cur.pdf++;
+        if (e.type === "open_detail") cur.detail++;
+        if (e.type === "favorite_toggle" && e.metadata?.value === true)
           cur.fav++;
         clicks.set(id, cur);
       });
-      const rows = (notices as any[]).map((n) => {
-        const pubno = String((n as any)["publication-number"] ?? "");
+      const rows = (notices as TedNotice[]).map((n) => {
+        const pubno = String(n["publication-number"] ?? "");
         const buyer =
-          (n as any)["buyer-name"]?.ita?.[0] ??
-          (n as any)["buyer-name"]?.eng?.[0] ??
-          (n as any)["buyer-name"]?.en?.[0] ??
+          n["buyer-name"]?.ita?.[0] ??
+          n["buyer-name"]?.eng?.[0] ??
+          n["buyer-name"]?.en?.[0] ??
           "";
         const title =
-          (n as any)["notice-title"]?.ita ??
-          (n as any)["notice-title"]?.eng ??
-          (n as any)["notice-title"]?.en ??
+          n["notice-title"]?.ita ??
+          n["notice-title"]?.eng ??
+          n["notice-title"]?.en ??
           "";
         const cpv =
-          Array.isArray((n as any)["classification-cpv"]) &&
-          (n as any)["classification-cpv"][0]
-            ? String((n as any)["classification-cpv"][0])
-            : (n as any)["classification-cpv"]
-            ? String((n as any)["classification-cpv"])
+          Array.isArray(n["classification-cpv"]) && n["classification-cpv"][0]
+            ? String(n["classification-cpv"][0])
+            : n["classification-cpv"]
+            ? String(n["classification-cpv"])
             : "";
         const popularity = clicks.get(pubno) ?? {
           ted: 0,
@@ -116,14 +147,14 @@ export const feed = onRequest(
           if (prefs.regions.some((r) => txt.includes(r.toLowerCase())))
             prefScore += 0.5;
         }
-        const fresh = freshnessBonus((n as any)["publication-date"]);
+        const fresh = freshnessBonus(n["publication-date"]);
         const score =
           1.2 * prefScore + 0.8 * fresh + 0.3 * Math.log1p(popScore);
         const pdf =
-          (n as any).links?.pdf?.it ??
-          (n as any).links?.pdf?.ITA ??
-          (n as any).links?.pdf?.en ??
-          (n as any).links?.pdf?.ENG ??
+          n.links?.pdf?.it ??
+          n.links?.pdf?.ITA ??
+          n.links?.pdf?.en ??
+          n.links?.pdf?.ENG ??
           null;
         return {
           pubno,
@@ -131,19 +162,19 @@ export const feed = onRequest(
           buyer,
           title,
           published:
-            (Array.isArray((n as any)["publication-date"])
-              ? (n as any)["publication-date"][0]
-              : (n as any)["publication-date"]) ?? null,
+            (Array.isArray(n["publication-date"])
+              ? n["publication-date"][0]
+              : n["publication-date"]) ?? null,
           deadline:
-            (Array.isArray((n as any)["deadline-date-lot"])
-              ? (n as any)["deadline-date-lot"][0]
-              : (n as any)["deadline-date-lot"]) ?? null,
+            (Array.isArray(n["deadline-date-lot"])
+              ? n["deadline-date-lot"][0]
+              : n["deadline-date-lot"]) ?? null,
           cpv: cpv || null,
           value:
-            typeof (n as any)["total-value"] === "number"
-              ? (n as any)["total-value"]
-              : typeof (n as any)["estimated-value-glo"] === "number"
-              ? (n as any)["estimated-value-glo"]
+            typeof n["total-value"] === "number"
+              ? n["total-value"]
+              : typeof n["estimated-value-glo"] === "number"
+              ? n["estimated-value-glo"]
               : null,
           pdf,
           score,
@@ -155,9 +186,11 @@ export const feed = onRequest(
           : rows;
       filtered.sort((a, b) => b.score - a.score);
       res.json({ rows: filtered });
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      res.status(500).json({ error: e?.message ?? "Feed error" });
+      res.status(500).json({
+        error: e instanceof Error ? e.message : "Feed error",
+      });
     }
   }
 );

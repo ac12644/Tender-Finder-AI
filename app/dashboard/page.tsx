@@ -33,7 +33,8 @@ import {
   FileText,
 } from "lucide-react";
 
-const BASE_URL = process.env.NEXT_PUBLIC_TENDER_API_BASE ?? "";
+import { API_BASE_URL } from "@/lib/apiConfig";
+const BASE_URL = API_BASE_URL;
 
 interface BestTender {
   tenderId: string;

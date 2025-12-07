@@ -1,16 +1,11 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { profilesCol } from "./lib/firestore.extras";
-import { tedSearch, scoreTenderForProfile } from "./lib/ted";
-import type { UserProfile } from "./lib/models";
+import { profilesCol } from "../../lib/firestore.extras";
+import { tedSearch, scoreTenderForProfile } from "../../lib/ted";
+import type { UserProfile } from "../../lib/models";
+import { setCors } from "../../utils/cors";
 
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
 const FROM_EMAIL = process.env.DIGEST_FROM_EMAIL || "digest@your-app.tld";
-
-function setCors(res: { set: (key: string, value: string) => void }) {
-  res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-}
 
 async function sendEmail(to: string, subject: string, html: string) {
   if (!SENDGRID_API_KEY) {
@@ -86,7 +81,8 @@ export const digestDaily = onRequest(
           updatedAt: new Date(),
         };
 
-        const ranked = notices
+        const typedNotices = notices as Array<Record<string, unknown>>;
+        const ranked = typedNotices
           .map((n) => ({ n, score: scoreTenderForProfile(n, profile) }))
           .sort((a, b) => b.score - a.score)
           .slice(0, 8);
@@ -95,15 +91,20 @@ export const digestDaily = onRequest(
 
         const rows = ranked
           .map(({ n }) => {
-            const title =
-              n["notice-title"]?.ita ?? n["notice-title"]?.eng ?? "";
-            const buyer =
-              n["buyer-name"]?.ita?.[0] ?? n["buyer-name"]?.eng?.[0] ?? "";
-            const id = n["publication-number"];
+            const noticeTitle = n["notice-title"] as
+              | { ita?: string; eng?: string }
+              | undefined;
+            const buyerName = n["buyer-name"] as
+              | { ita?: string[]; eng?: string[] }
+              | undefined;
+            const title = noticeTitle?.ita ?? noticeTitle?.eng ?? "";
+            const buyer = buyerName?.ita?.[0] ?? buyerName?.eng?.[0] ?? "";
+            const id = n["publication-number"] as string;
+            const deadlineValue = n["deadline-date-lot"];
             const deadline =
-              (Array.isArray(n["deadline-date-lot"])
-                ? n["deadline-date-lot"][0]
-                : n["deadline-date-lot"]) || "";
+              (Array.isArray(deadlineValue)
+                ? deadlineValue[0]
+                : deadlineValue) || "";
             const dShort = String(deadline).slice(0, 10);
             const url = `https://ted.europa.eu/it/notice/-/detail/${encodeURIComponent(
               id
@@ -124,7 +125,7 @@ export const digestDaily = onRequest(
             }">Apri la tua pagina “Per te”</a> |
             <a href="${
               process.env.APP_PUBLIC_URL ?? "#"
-            }?prefs=1">Aggiorna preferenze</a>
+            }/profilo-aziendale">Aggiorna preferenze</a>
           </p>
           <p style="color:#7a7a7a">Ricevi questa email perché hai attivato il riepilogo mattutino.</p>
         </div>`;

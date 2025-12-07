@@ -1,5 +1,5 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { db, serverTimestamp } from "./lib/firestore";
+import { db, serverTimestamp } from "../../lib/firestore";
 
 export const events = onRequest(
   { region: "europe-west1", cors: true },
@@ -33,9 +33,11 @@ export const events = onRequest(
       });
 
       res.json({ ok: true });
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      res.status(500).json({ error: e?.message ?? "Event log failed" });
+      res.status(500).json({
+        error: e instanceof Error ? e.message : "Event log failed",
+      });
     }
   }
 );

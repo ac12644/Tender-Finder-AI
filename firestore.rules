@@ -1,0 +1,176 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function: check if user is signed in
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Helper function: check if user owns the resource
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Helper function: check if user is admin (you can customize this)
+    // For now, we'll use a simple check - you may want to store admin status in user profile
+    function isAdmin() {
+      return isSignedIn() && 
+             request.auth.token.admin == true;
+      // Alternative: check against a list of admin UIDs
+      // return isSignedIn() && request.auth.uid in ['4s418LqX8UM1fmo9KhAw56QrINn1'];
+    }
+
+    // ============================================
+    // USER PROFILE & PREFERENCES
+    // ============================================
+
+    // User profile: only owner can read/write
+    match /profiles/{uid} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // Preferences history: only owner can read/write
+    match /preferences_history/{uid}/events/{eventId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // ============================================
+    // TENDERS (PUBLIC DATA)
+    // ============================================
+
+    // Public tenders from TED: read-only for all, no writes
+    match /tenders/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ============================================
+    // USER-SPECIFIC DATA
+    // ============================================
+
+    // Matches: authenticated users can create/read their own
+    match /matches/{docId} {
+      allow read, write: if isSignedIn() && 
+        (resource == null || resource.data.uid == request.auth.uid);
+    }
+
+    // Saved tenders: user can only access their own
+    match /saved/{docId} {
+      allow create: if isSignedIn() && 
+        request.resource.data.uid == request.auth.uid;
+      allow read, update, delete: if isSignedIn() && 
+        resource.data.uid == request.auth.uid;
+    }
+
+    // Saved searches: user can only access their own
+    match /saved_searches/{uid}/items/{itemId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // Favorites: user can only access their own
+    match /favorites/{uid}/tenders/{tenderId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // Company profiles: user can only access their own
+    match /company_profiles/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Search history: user can only access their own
+    match /search_history/{uid}/searches/{searchId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // Searches: user can only access their own
+    match /searches/{searchId} {
+      allow read, write: if isSignedIn() && 
+        (resource == null || resource.data.uid == request.auth.uid);
+    }
+
+    // Events: user can only access their own
+    match /events/{eventId} {
+      allow create: if isSignedIn() && 
+        request.resource.data.uid == request.auth.uid;
+      allow read, update, delete: if isSignedIn() && 
+        resource.data.uid == request.auth.uid;
+    }
+
+    // Applications: user can only access their own
+    match /applications/{applicationId} {
+      allow create: if isSignedIn() && 
+        request.resource.data.userId == request.auth.uid;
+      allow read, update, delete: if isSignedIn() && 
+        resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================
+    // ADMIN & TELEMETRY COLLECTIONS
+    // ============================================
+
+    // Agent telemetry: server writes, admins read
+    // Note: Firebase Functions bypass rules, so writes work server-side
+    // These rules are for client-side access (if any)
+    match /agent_telemetry/{docId} {
+      allow read: if isAdmin();
+      allow write: if false; // Only server can write
+    }
+
+    // Agent errors: server writes, admins read
+    match /agent_errors/{docId} {
+      allow read: if isAdmin();
+      allow write: if false; // Only server can write
+    }
+
+    // Tool calls: server writes, admins read
+    match /tool_calls/{docId} {
+      allow read: if isAdmin();
+      allow write: if false; // Only server can write
+    }
+
+    // Tender discovery metrics: server writes, admins read
+    match /tender_discovery_metrics/{docId} {
+      allow read: if isAdmin();
+      allow write: if false; // Only server can write
+    }
+
+    // ============================================
+    // SYSTEM COLLECTIONS
+    // ============================================
+
+    // Metadata: read-only for all authenticated users
+    match /_meta/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false; // Only server can write
+    }
+
+    // ============================================
+    // DEFAULT DENY
+    // ============================================
+
+    // Node executions: admins read, server writes
+    match /node_executions/{docId} {
+      allow read: if isAdmin();
+      allow write: if false; // Only server can write
+    }
+
+    // Decisions: admins read, server writes
+    match /decisions/{docId} {
+      allow read: if isAdmin();
+      allow write: if false; // Only server can write
+    }
+
+    // Document chunks (RAG): users can read their own, server writes
+    match /document_chunks/{chunkId} {
+      allow read: if isSignedIn(); // Users can read chunks for their contracts
+      allow write: if false; // Only server can write
+    }
+
+    // Deny all other collections by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
